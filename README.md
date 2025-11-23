@@ -300,7 +300,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## 📝 Changelog
 
-### v2.0 (2025-11-23)
+### v2.0
 - ✨ Added timestamp-based filtering (no more duplicates)
 - 🎯 Limited check to last 5 videos per user
 - 🛠️ Improved anti-bot with randomized delays
@@ -308,7 +308,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - 👥 Added `manage_users.py` for CLI
 - ✅ Added `check_installation.py`
 
-### v1.0 (2025-01-15)
+### v1.0
 - 🎉 Initial release
 - 🤖 Basic automatic monitoring
 - 📥 Download with geo-bypass
