@@ -3,7 +3,7 @@
 
 # Core dependencies
 yt-dlp>=2023.10.0
-
+packaging>=21.0
 # Database (included in Python standard library, but we specify for clarity)
 # sqlite3 is already included in Python
 
