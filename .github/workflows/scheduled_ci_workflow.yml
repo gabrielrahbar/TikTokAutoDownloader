@@ -15,8 +15,8 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - 'tests/test_integration.py'
-      - '.github/workflows/scheduled-tests.yml'
+      - 'tests/integration_tests.py'
+      - '.github/workflows/scheduled_ci_workflow.yml'
 
 # Limit permissions for security
 permissions:
@@ -28,7 +28,7 @@ jobs:
     name: Test TikTok Downloads
     runs-on: ubuntu-latest
     timeout-minutes: 10  # Kill job if it takes too long
-    
+
     steps:
     # Step 1: Checkout code
     - name: 📥 Checkout repository
@@ -53,7 +53,7 @@ jobs:
       id: integration_tests
       run: |
         echo "Running integration tests..."
-        python tests/test_integration.py
+        python tests/integration_tests.py
       continue-on-error: true  # Don't fail immediately, handle below
 
     # Step 5: Create issue if tests fail
@@ -87,7 +87,7 @@ jobs:
           pip install --upgrade yt-dlp
           
           # Test manually
-          python tests/test_integration.py
+          python tests/integration_tests.py
           \`\`\`
           
           ---
@@ -134,7 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: integration-test
     if: success()
-    
+
     steps:
     - name: 🔍 Check for open automated issues
       uses: actions/github-script@v7
@@ -152,7 +152,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issue.number,
-              body: `### ✅ Tests are now passing!\n\n**Date:** ${new Date().toLocaleString()}\n**Run:** [#${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})\n\nThe integration tests are now passing. This issue is being automatically closed.`
+              body: `### ✅ Tests are now passing!\n\n**Date:** ${new Date().toLocaleString()}\n**Run:** [#${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})\n\nThe integration tests are working again. Closing this issue automatically.`
             });
             
             await github.rest.issues.update({
@@ -164,3 +164,4 @@ jobs:
             
             console.log(`Closed issue #${issue.number}`);
           }
+          
