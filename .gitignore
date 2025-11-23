@@ -1,0 +1,97 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# TikTok Monitor specific
+tiktok_downloads/
+*.db
+*.db-journal
+tiktok_monitor.db
+tiktok_monitor.db-journal
+
+# Cookies and sensitive data
+*.txt
+tiktok_cookies.txt
+cookies.txt
+!requirements.txt
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# OS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Distribution / packaging
+*.whl
