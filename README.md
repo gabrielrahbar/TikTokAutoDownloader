@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![yt-dlp](https://img.shields.io/badge/yt--dlp-2023.10.0+-red.svg)](https://github.com/yt-dlp/yt-dlp)
-[![Integration Tests](https://github.com/gabrielrahbar/TikTokAutoDownloader/actions/workflows/scheduled-tests.yml/badge.svg)](https://github.com/gabrielrahbar/TikTokAutoDownloader/actions/workflows/scheduled-tests.yml)
+[![Integration Tests](https://github.com/gabrielrahbar/TikTokAutoDownloader/actions/workflows/scheduled_ci_workflow.yml/badge.svg)](https://github.com/gabrielrahbar/TikTokAutoDownloader/actions/workflows/scheduled_ci_workflow.yml)
 
 Automatically monitor TikTok users and intelligently download only new videos. Features timestamp-based tracking to avoid duplicates and anti-bot behavior to appear human-like.
 
