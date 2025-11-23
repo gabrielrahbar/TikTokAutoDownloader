@@ -19,6 +19,30 @@ Automatically monitor TikTok users and intelligently download only new videos. F
 - 🎨 **Interactive menu** - User-friendly CLI with guided options
 - 📁 **Organized downloads** - Files named by author and date
 
+## Highly Recommended
+
+### VPN Usage
+
+**Even if you're not in a restricted country, using a VPN is strongly recommended:**
+
+- ✅ **Better privacy** - Masks your IP address from TikTok
+- ✅ **Avoid rate limiting** - Reduces risk of temporary bans
+- ✅ **Consistent downloads** - More stable connection to TikTok servers
+- ✅ **Geographic diversity** - Access content from different regions
+
+**Recommended VPN locations:**
+- 🇺🇸 United States (best compatibility)
+- 🇬🇧 United Kingdom
+- 🇨🇦 Canada
+- 🇩🇪 Germany
+
+**Setup:**
+```bash
+# 1. Connect to VPN (USA recommended)
+# 2. Run the monitor
+python tiktok_monitor.py --auto --users username
+
+# The built-in geo-bypass will work better with VPN active
 ## 🚀 Installation
 
 ### Requirements
