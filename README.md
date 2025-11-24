@@ -96,7 +96,7 @@ You'll see this menu:
 **Example workflow:**
 1. Choose `1` to add a user (e.g., `charlidamelio`)
 2. Choose `7` to start automatic monitoring
-3. The bot will check every 30 minutes and download new videos
+3. The bot will check every 30 minutes [Default] (you can choose it) and download new videos
 
 ### Mode 2: Command Line (Advanced)
 
@@ -158,7 +158,7 @@ python view_report.py
 Example output:
 ```
 ╔════════════════════════════════════════════════════════════╗
-║                  TikTok Monitor Report                      ║
+║                  TikTok Monitor Report                     ║
 ╚════════════════════════════════════════════════════════════╝
 
 📊 GENERAL STATISTICS
@@ -195,11 +195,11 @@ If you get errors like "Video not available in your country":
    python tiktok_downloader_advanced.py --cookies tiktok_cookies.txt URL
    ```
 
-### Method 2: VPN
+### Method 2: VPN (_Recommended_)
 
 Connect to a VPN (USA/UK) before running downloads. The automatic geo-bypass will handle the rest.
 
-## 📁 Project Structure
+## 📁 Main Project Structure
 
 ```
 TikTokAutoDownloader/
