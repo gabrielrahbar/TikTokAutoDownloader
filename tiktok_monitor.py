@@ -590,7 +590,7 @@ class TikTokMonitor:
                 wait_with_jitter(base_wait, jitter_percent=0.1)
                 
                 next_check = datetime.now() + timedelta(seconds=base_wait)
-                logger.info(f"\n⏰ Next check: {next_check.strftime('%H:%M:%S')}")
+                logger.info(f" ⏰ Next check: {next_check.strftime('%H:%M:%S')}")
                 logger.info(f"💤 Waiting {base_wait / 60:.1f} minutes...")
 
         except KeyboardInterrupt:
