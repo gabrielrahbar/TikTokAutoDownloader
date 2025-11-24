@@ -8,6 +8,9 @@ import argparse
 import yt_dlp
 import os
 from pathlib import Path
+from logger_manager import logger
+from retry_utils import retry_on_network_error, retry_on_api_error, RetryContext
+
 
 class TikTokDownloader:
     def __init__(self, output_dir="./tiktok_downloads", use_cookies=False, cookies_file=None, geo_bypass=True):
@@ -16,10 +19,18 @@ class TikTokDownloader:
         self.use_cookies = use_cookies
         self.cookies_file = cookies_file
         self.geo_bypass = geo_bypass
+        
+        logger.info(f"Downloader initialized: {output_dir}")
+        if geo_bypass:
+            logger.debug("Geo-bypass enabled (USA)")
+        if use_cookies and cookies_file:
+            logger.debug(f"Using cookies: {cookies_file}")
     
+    @retry_on_network_error(max_retries=3)
+    @retry_on_api_error(max_retries=5)
     def download(self, url, quality='best', with_audio=True):
         """
-        Download a TikTok video with geo-restriction support
+        Download a TikTok video with geo-restriction support and automatic retry
         
         Args:
             url: Video URL
@@ -31,8 +42,8 @@ class TikTokDownloader:
         ydl_opts = {
             'format': format_string,
             'outtmpl': str(self.output_dir / '%(title)s.%(ext)s'),
-            'quiet': False,
-            'no_warnings': False,
+            'quiet': True,  # Suppress yt-dlp output (we use logging)
+            'no_warnings': True,
             'extract_flat': False,
             
             'http_headers': {
@@ -48,6 +59,11 @@ class TikTokDownloader:
             }] if with_audio else [],
             
             'ignoreerrors': False,
+            
+            # Network retry settings (yt-dlp internal)
+            'retries': 3,
+            'fragment_retries': 3,
+            'socket_timeout': 30,
         }
         
         if self.geo_bypass:
@@ -57,57 +73,90 @@ class TikTokDownloader:
         if self.use_cookies and self.cookies_file:
             if os.path.exists(self.cookies_file):
                 ydl_opts['cookiefile'] = self.cookies_file
-                print(f"🍪 Using cookies from: {self.cookies_file}")
+                logger.debug(f"Cookies loaded: {self.cookies_file}")
             else:
-                print(f"⚠️  Cookie file not found: {self.cookies_file}")
+                logger.warning(f"Cookie file not found: {self.cookies_file}")
         
         try:
+            logger.info(f"📥 Downloading: {url}")
+            logger.debug(f"Output: {self.output_dir}")
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                print(f"\n📥 Downloading from: {url}")
-                print(f"📁 Output folder: {self.output_dir}")
-                print(f"🌍 Geo-bypass: {'Enabled (USA)' if self.geo_bypass else 'Disabled'}\n")
-                
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
                 
-                print(f"\n✓ Download completed!")
-                print(f"📄 File: {filename}")
-                print(f"📝 Title: {info.get('title', 'N/A')}")
-                print(f"👤 Author: {info.get('uploader', 'Unknown')}")
-                print(f"👁️  Views: {info.get('view_count', 0):,}")
-                print(f"❤️  Likes: {info.get('like_count', 0):,}")
-                print(f"💬 Comments: {info.get('comment_count', 0):,}")
+                # Log success with details
+                logger.success("Download completed!")
+                logger.info(f"📄 File: {filename}")
+                logger.info(f"🎬 Title: {info.get('title', 'N/A')}")
+                logger.info(f"👤 Author: {info.get('uploader', 'Unknown')}")
+                logger.info(f"👁️  Views: {info.get('view_count', 0):,}")
+                logger.info(f"❤️  Likes: {info.get('like_count', 0):,}")
+                logger.info(f"💬 Comments: {info.get('comment_count', 0):,}")
                 
                 return filename
+                
         except yt_dlp.utils.DownloadError as e:
             error_msg = str(e)
+            
+            # Handle specific error types
             if 'geo' in error_msg.lower() or 'not available' in error_msg.lower():
-                print(f"\n✗ Geo-restriction error detected!")
-                print(f"💡 Suggestions:")
-                print(f"   1. Use --cookies option to import your TikTok cookies")
-                print(f"   2. Try with an active VPN")
-                print(f"   3. Some videos might be private or removed")
+                logger.error("❌ Geo-restriction error detected!")
+                logger.geo_restriction_detected()
+                raise ConnectionError("Geo-restriction detected")  # Will trigger retry
+                
+            elif 'private' in error_msg.lower():
+                logger.error("❌ Video is private")
+                raise ValueError("Video is private")  # Non-retryable
+                
+            elif 'removed' in error_msg.lower() or 'deleted' in error_msg.lower():
+                logger.error("❌ Video has been removed")
+                raise ValueError("Video removed")  # Non-retryable
+                
+            elif 'rate' in error_msg.lower() or '429' in error_msg:
+                logger.error("❌ Rate limited by TikTok")
+                raise ConnectionError("Rate limited")  # Will trigger retry with longer wait
+                
             else:
-                print(f"\n✗ Download error: {error_msg}")
-            return None
+                logger.error(f"❌ Download error: {error_msg}")
+                raise  # Re-raise for retry logic
+                
         except Exception as e:
-            print(f"\n✗ Unexpected error: {str(e)}")
-            return None
+            logger.error(f"❌ Unexpected error: {str(e)}", exc_info=True)
+            raise
     
     def download_multiple(self, urls):
-        """Download multiple videos"""
+        """Download multiple videos with retry logic"""
         results = []
-        for i, url in enumerate(urls, 1):
-            print(f"\n{'='*60}")
-            print(f"Video {i}/{len(urls)}")
-            print(f"{'='*60}")
-            result = self.download(url)
-            results.append(result)
+        successful = 0
+        failed = 0
         
-        successful = sum(1 for r in results if r is not None)
-        print(f"\n{'='*60}")
-        print(f"Completed downloads: {successful}/{len(urls)}")
-        print(f"{'='*60}")
+        logger.info(f"Starting batch download: {len(urls)} videos")
+        
+        for i, url in enumerate(urls, 1):
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info(f"Video {i}/{len(urls)}")
+            logger.info("=" * 60)
+            
+            try:
+                result = self.download(url)
+                results.append(result)
+                successful += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to download video {i}: {str(e)}")
+                results.append(None)
+                failed += 1
+        
+        # Summary
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("BATCH DOWNLOAD SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"✅ Successful: {successful}/{len(urls)}")
+        logger.info(f"❌ Failed: {failed}/{len(urls)}")
+        logger.info("=" * 60)
         
         return results
 
@@ -115,9 +164,9 @@ class TikTokDownloader:
 def export_cookies_instructions():
     """Show instructions for exporting cookies"""
     instructions = """
-╔════════════════════════════════════════════════════════════════════════╗
+╔═══════════════════════════════════════════════════════════════════════╗
 ║          HOW TO EXPORT COOKIES FROM TIKTOK                             ║
-╚════════════════════════════════════════════════════════════════════════╝
+╚═══════════════════════════════════════════════════════════════════════╝
 
 To download videos with geographical restrictions or that require login:
 
@@ -149,7 +198,7 @@ NOTE: Cookies expire periodically, you may need to update them.
 
 def main():
     parser = argparse.ArgumentParser(
-        description='TikTok Video Downloader with geo-restriction support',
+        description='TikTok Video Downloader with geo-restriction support and auto-retry',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -184,6 +233,8 @@ Examples:
                         help='Disable automatic geo-bypass')
     parser.add_argument('--help-cookies', action='store_true',
                         help='Show instructions for exporting cookies')
+    parser.add_argument('--max-retries', type=int, default=3,
+                        help='Maximum retry attempts (default: 3)')
     
     args = parser.parse_args()
     
@@ -198,24 +249,44 @@ Examples:
         geo_bypass=not args.no_geo_bypass
     )
     
-    if args.file:
-        with open(args.file, 'r') as f:
-            urls = [line.strip() for line in f if line.strip()]
-        downloader.download_multiple(urls)
-    elif args.url:
-        downloader.download(args.url, args.quality, not args.no_audio)
-    else:
-        print("╔════════════════════════════════════════════════════════════╗")
-        print("║        TikTok Video Downloader - by gabrielrahbar          ║")
-        print("╚════════════════════════════════════════════════════════════╝")
-        print("\nFor videos with geo-restrictions, use: --cookies tiktok_cookies.txt")
-        print("For cookie instructions: --help-cookies\n")
-        url = input("Enter TikTok video URL: ").strip()
-        if url:
-            downloader.download(url, args.quality, not args.no_audio)
+    # Override retry config if specified
+    if args.max_retries:
+        from retry_utils import RetryConfig
+        RetryConfig.MAX_DOWNLOAD_RETRIES = args.max_retries
+    
+    try:
+        if args.file:
+            logger.info(f"Reading URLs from file: {args.file}")
+            with open(args.file, 'r') as f:
+                urls = [line.strip() for line in f if line.strip()]
+            logger.info(f"Found {len(urls)} URLs")
+            downloader.download_multiple(urls)
+            
+        elif args.url:
+            downloader.download(args.url, args.quality, not args.no_audio)
+            
         else:
-            parser.print_help()
+            logger.info("╔═══════════════════════════════════════════════════════════╗")
+            logger.info("║        TikTok Video Downloader - by gabrielrahbar          ║")
+            logger.info("╚═══════════════════════════════════════════════════════════╝")
+            logger.info("")
+            logger.info("For videos with geo-restrictions, use: --cookies tiktok_cookies.txt")
+            logger.info("For cookie instructions: --help-cookies")
+            logger.info("")
+            url = input("Enter TikTok video URL: ").strip()
+            if url:
+                downloader.download(url, args.quality, not args.no_audio)
+            else:
+                parser.print_help()
+                
+    except KeyboardInterrupt:
+        logger.info("\n❌ Download interrupted by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}", exc_info=True)
+        return 1
+    
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())
