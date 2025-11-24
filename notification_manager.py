@@ -102,7 +102,7 @@ class NotificationManager:
             notification.notify(
                 title=title,
                 message=message,
-                app_name="TikTok Monitor",
+                app_name="TikTokAutoDownloader",
                 timeout=timeout
             )
             logger.debug(f"Notification sent: {title}")

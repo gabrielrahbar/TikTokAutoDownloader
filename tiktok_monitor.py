@@ -574,24 +574,24 @@ class TikTokMonitor:
                             logger.critical(f"Too many consecutive errors ({consecutive_errors}). Stopping.")
                             raise
 
-                logger.info("")
-                logger.info("=" * 60)
-                logger.info(f"✅ Iteration #{iteration} completed")
-                logger.info(f"📥 New videos downloaded: {total_downloaded}")
-                logger.info("=" * 60)
+                print("")
+                print("=" * 60)
+                print(f"✅ Iteration #{iteration} completed")
+                print(f"📥 New videos downloaded: {total_downloaded}")
+                print("=" * 60)
 
                 # Check if should stop
                 if max_iterations and iteration >= max_iterations:
-                    logger.info(f"\n🏁 Reached limit of {max_iterations} iterations")
+                    print(f"\n🏁 Reached limit of {max_iterations} iterations")
                     break
 
                 # Calculate next check with random variation (±10%)
                 base_wait = interval_minutes * 60
-                wait_with_jitter(base_wait, jitter_percent=0.1)
-                
                 next_check = datetime.now() + timedelta(seconds=base_wait)
-                logger.info(f" ⏰ Next check: {next_check.strftime('%H:%M:%S')}")
-                logger.info(f"💤 Waiting {base_wait / 60:.1f} minutes...")
+                print(f"\n⏰ Next check: {next_check.strftime('%H:%M:%S')}")
+                print(f"💤 Waiting {base_wait / 60:.1f} minutes...\n")
+                
+                wait_with_jitter(base_wait, jitter_percent=0.1)
 
         except KeyboardInterrupt:
             logger.info("\n\n⚠️  Monitoring interrupted by user")
@@ -634,10 +634,10 @@ class TikTokMonitor:
 def interactive_menu(monitor):
     """Interactive menu with user management and notifications"""
     while True:
-        print("  ╔═════════════════════════════════════════════════════════╗")
-        print("  ║              TikTok Monitor - Main Menu v2.2            ║")
-        print("  ║                                                         ║")
-        print("  ╚═════════════════════════════════════════════════════════╝")
+        print(" ╔═══════════════════════════════════════════════════════════╗")
+        print(" ║              TikTok Monitor - Main Menu v2.2              ║")
+        print(" ║                                                           ║")
+        print(" ╚═══════════════════════════════════════════════════════════╝")
         print("\n👥 USER MANAGEMENT")
         print("  1. ➕ Add user to monitor")
         print("  2. 📋 List monitored users")
