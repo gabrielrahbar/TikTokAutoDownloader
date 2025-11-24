@@ -24,10 +24,10 @@ class TikTokMonitor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.db_file = db_file
         self.init_database()
-        
+
         # Load notification preference from database
         self._load_notification_preference()
-        
+
         logger.info(f"Monitor initialized")
         logger.debug(f"Output directory: {output_dir}")
         logger.debug(f"Database: {db_file}")
@@ -66,7 +66,7 @@ class TikTokMonitor:
                 enabled INTEGER DEFAULT 1
             )
         ''')
-        
+
         # Settings table (for notifications and other preferences)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS settings (
@@ -83,16 +83,16 @@ class TikTokMonitor:
         """Load notification preference from database"""
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
-        
+
         try:
             cursor.execute('SELECT value FROM settings WHERE key = ?', ('notifications_enabled',))
             result = cursor.fetchone()
-            
+
             if result and result[0] == '1':
                 notifier.enable()
             else:
                 notifier.disable()
-                
+
         except Exception as e:
             logger.debug(f"Could not load notification preference: {e}")
             notifier.disable()  # Default: disabled
@@ -103,7 +103,7 @@ class TikTokMonitor:
         """Save notification preference to database"""
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
-        
+
         try:
             value = '1' if notifier.enabled else '0'
             cursor.execute('''
@@ -123,13 +123,13 @@ class TikTokMonitor:
             logger.error("Desktop notifications not available")
             logger.info("Install with: pip install plyer")
             return False
-        
+
         new_state = notifier.toggle()
         self._save_notification_preference()
-        
+
         status = "enabled" if new_state else "disabled"
         logger.info(f"Desktop notifications {status}")
-        
+
         # Send test notification if enabled
         if new_state:
             notifier.send(
@@ -137,7 +137,7 @@ class TikTokMonitor:
                 message="You will be notified when new videos are downloaded",
                 timeout=5
             )
-        
+
         return new_state
 
     def add_user_to_monitor(self, username):
@@ -149,7 +149,7 @@ class TikTokMonitor:
             cursor.execute('''
                 INSERT OR IGNORE INTO monitored_users (username, last_check, last_video_timestamp)
                 VALUES (?, ?, ?)
-            ''', (username, datetime.utcnow().isoformat(), 0))
+            ''', (username, datetime.now().isoformat(), 0))
             conn.commit()
             logger.user_added(username)
             return True
@@ -283,7 +283,7 @@ class TikTokMonitor:
             UPDATE monitored_users 
             SET last_video_timestamp = ?, last_check = ?
             WHERE username = ?
-        ''', (timestamp, datetime.utcnow().isoformat(), username))
+        ''', (timestamp, datetime.now().isoformat(), username))
         conn.commit()
         conn.close()
 
@@ -314,7 +314,7 @@ class TikTokMonitor:
             video_info.get('uploader', ''),
             video_info.get('upload_date', ''),
             video_info.get('timestamp', 0),
-            datetime.utcnow().isoformat(),
+            datetime.now().isoformat(),
             str(file_path),
             video_info.get('like_count', 0),
             video_info.get('view_count', 0)
@@ -348,7 +348,7 @@ class TikTokMonitor:
 
         try:
             logger.debug(f"Fetching videos for @{username}")
-            
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
@@ -368,7 +368,7 @@ class TikTokMonitor:
                     logger.debug(f"Found {len(videos)} videos for @{username}")
                     return videos
                 return []
-                
+
         except Exception as e:
             logger.error(f"Error fetching videos for @{username}: {e}")
             raise  # Re-raise for retry logic
@@ -395,7 +395,7 @@ class TikTokMonitor:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
                 return info, filename
-                
+
         except Exception as e:
             logger.error(f"Download error for {url}: {e}")
             raise  # Re-raise for retry logic
@@ -414,14 +414,21 @@ class TikTokMonitor:
         with RetryContext(max_retries=3, delay_range=(30, 60)) as retry:
             while retry.should_retry():
                 try:
-                    # Get last known video timestamp
-                    last_timestamp = self.get_last_video_timestamp(username)
+                    # Get last check time from database (for display only)
+                    conn = sqlite3.connect(self.db_file)
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT last_check FROM monitored_users WHERE username = ?', (username,))
+                    result = cursor.fetchone()
+                    conn.close()
 
-                    if last_timestamp > 0:
-                        last_date = datetime.fromtimestamp(last_timestamp)
-                        logger.info(f"📅 Last check: {last_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    if result and result[0]:
+                        last_check_time = datetime.fromisoformat(result[0])
+                        logger.info(f"📅 Last check: {last_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     else:
                         logger.info("📅 First time monitoring this user")
+
+                    # Keep the timestamp logic intact - this is the core functionality
+                    last_timestamp = self.get_last_video_timestamp(username)
 
                     # Get latest videos
                     logger.debug("Fetching video metadata...")
@@ -429,6 +436,18 @@ class TikTokMonitor:
 
                     if not videos:
                         logger.warning(f"No videos found for @{username}")
+
+                        # UPDATE LAST_CHECK EVEN WHEN NO VIDEOS ARE FOUND
+                        conn = sqlite3.connect(self.db_file)
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            UPDATE monitored_users 
+                            SET last_check = ?
+                            WHERE username = ?
+                        ''', (datetime.now().isoformat(), username))
+                        conn.commit()
+                        conn.close()
+
                         retry.success()
                         return 0
 
@@ -438,7 +457,7 @@ class TikTokMonitor:
                     new_videos = []
                     for video in videos:
                         video_timestamp = video.get('timestamp', 0)
-                        
+
                         # Video is new if timestamp > last_timestamp OR not in database
                         if video_timestamp > last_timestamp or not self.is_video_downloaded(video['id']):
                             if video_timestamp > 0 and video_timestamp <= last_timestamp:
@@ -447,11 +466,23 @@ class TikTokMonitor:
 
                     if not new_videos:
                         logger.info(f"✅ No new videos for @{username}")
+
+                        # UPDATE LAST_CHECK EVEN WHEN NO NEW VIDEOS ARE FOUND
+                        conn = sqlite3.connect(self.db_file)
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            UPDATE monitored_users 
+                            SET last_check = ?
+                            WHERE username = ?
+                        ''', (datetime.now().isoformat(), username))
+                        conn.commit()
+                        conn.close()
+
                         retry.success()
                         return 0
 
                     logger.new_videos_found(len(new_videos), username)
-                    
+
                     # Display new videos info
                     for i, video in enumerate(new_videos, 1):
                         video_date = datetime.fromtimestamp(video['timestamp']) if video['timestamp'] > 0 else None
@@ -479,7 +510,7 @@ class TikTokMonitor:
                                     self.save_video_metadata(info, filepath)
                                     downloaded += 1
                                     logger.download_complete(filepath, username)
-                                    
+
                                     # Send desktop notification (if enabled)
                                     notify_video(
                                         username=username,
@@ -491,7 +522,7 @@ class TikTokMonitor:
                                     video_timestamp = info.get('timestamp', 0)
                                     if video_timestamp > newest_timestamp:
                                         newest_timestamp = video_timestamp
-                                        
+
                             except Exception as e:
                                 logger.download_failed(video['url'], username, str(e))
                                 # Continue with other videos
@@ -501,21 +532,21 @@ class TikTokMonitor:
                         self.update_last_video_timestamp(username, newest_timestamp)
                         logger.debug(f"Updated timestamp: {datetime.fromtimestamp(newest_timestamp)}")
 
-                    # Update total count
+                    # Update total count AND last_check
                     conn = sqlite3.connect(self.db_file)
                     cursor = conn.cursor()
                     cursor.execute('''
                         UPDATE monitored_users 
                         SET total_videos = total_videos + ?, last_check = ?
                         WHERE username = ?
-                    ''', (downloaded, datetime.utcnow().isoformat(), username))
+                    ''', (downloaded, datetime.now().isoformat(), username))
                     conn.commit()
                     conn.close()
 
                     logger.info(f"\n✅ Monitoring complete: {downloaded} new videos downloaded")
                     retry.success()
                     return downloaded
-                    
+
                 except Exception as e:
                     logger.error(f"Error monitoring @{username}: {e}", exc_info=True)
                     retry.failed(e)
@@ -525,7 +556,7 @@ class TikTokMonitor:
     def start_monitoring(self, interval_minutes=30, max_iterations=None):
         """
         Start continuous monitoring loop with retry logic
-        
+
         Args:
             interval_minutes: Minutes between each check
             max_iterations: Maximum number of iterations (None = infinite)
@@ -552,7 +583,7 @@ class TikTokMonitor:
                 logger.info("#" * 60)
 
                 total_downloaded = 0
-                
+
                 for username in users:
                     try:
                         logger.monitoring_check(iteration, username)
@@ -565,11 +596,11 @@ class TikTokMonitor:
                             delay = random.uniform(10, 30)
                             logger.debug(f"Delay before next user: {delay:.1f}s")
                             time.sleep(delay)
-                            
+
                     except Exception as e:
                         logger.error(f"Failed to monitor @{username}: {e}")
                         consecutive_errors += 1
-                        
+
                         if consecutive_errors >= max_consecutive_errors:
                             logger.critical(f"Too many consecutive errors ({consecutive_errors}). Stopping.")
                             raise
@@ -590,7 +621,7 @@ class TikTokMonitor:
                 next_check = datetime.now() + timedelta(seconds=base_wait)
                 print(f"\n⏰ Next check: {next_check.strftime('%H:%M:%S')}")
                 print(f"💤 Waiting {base_wait / 60:.1f} minutes...\n")
-                
+
                 wait_with_jitter(base_wait, jitter_percent=0.1)
 
         except KeyboardInterrupt:
@@ -666,14 +697,17 @@ def interactive_menu(monitor):
 
             if users:
                 print(f"\n{'=' * 100}")
-                print(f"{'Username':<20} {'Status':<12} {'Last Check':<20} {'Last Timestamp':<20} {'Total':<8} {'In DB':<8}")
+                print(
+                    f"{'Username':<20} {'Status':<12} {'Last Check':<20} {'Last Timestamp':<20} {'Total':<8} {'In DB':<8}")
                 print(f"{'=' * 100}")
 
                 for username, last_check, total, enabled, last_ts, db_videos in users:
                     status = "🟢 Active" if enabled else "🔴 Disabled"
-                    last_check_str = datetime.fromisoformat(last_check).strftime('%d/%m/%Y %H:%M') if last_check else 'Never'
+                    last_check_str = datetime.fromisoformat(last_check).strftime(
+                        '%d/%m/%Y %H:%M') if last_check else 'Never'
                     last_ts_str = datetime.fromtimestamp(last_ts).strftime('%d/%m/%Y %H:%M') if last_ts > 0 else 'None'
-                    print(f"@{username:<19} {status:<12} {last_check_str:<20} {last_ts_str:<20} {total:<8} {db_videos:<8}")
+                    print(
+                        f"@{username:<19} {status:<12} {last_check_str:<20} {last_ts_str:<20} {total:<8} {db_videos:<8}")
 
                 print(f"{'=' * 100}")
                 print(f"Total: {len(users)} users")
