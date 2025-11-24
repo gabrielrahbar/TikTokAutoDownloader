@@ -4,8 +4,9 @@
 # Core dependencies
 yt-dlp>=2023.10.0
 packaging>=21.0
-# Database (included in Python standard library, but we specify for clarity)
-# sqlite3 is already included in Python
 
 # Optional but recommended for advanced features
 requests>=2.31.0
+
+# Desktop notifications
+plyer>=2.1.0

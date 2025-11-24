@@ -2,7 +2,7 @@
 """
 TikTok Monitor - Automatically monitor and download new TikTok videos
 Tracks last seen video and downloads only truly new ones using timestamps
-Version: 2.1 - Added retry logic and professional logging
+Version: 2.2 - Added retry logic, professional logging, and desktop notifications
 """
 
 import yt_dlp
@@ -15,6 +15,7 @@ import random
 import argparse
 from logger_manager import logger
 from retry_utils import retry_on_network_error, retry_on_api_error, RetryContext, wait_with_jitter
+from notification_manager import notifier, notify_video
 
 
 class TikTokMonitor:
@@ -24,15 +25,20 @@ class TikTokMonitor:
         self.db_file = db_file
         self.init_database()
         
+        # Load notification preference from database
+        self._load_notification_preference()
+        
         logger.info(f"Monitor initialized")
         logger.debug(f"Output directory: {output_dir}")
         logger.debug(f"Database: {db_file}")
+        logger.debug(f"Notifications: {notifier.get_status_text()}")
 
     def init_database(self):
-        """Initialize SQLite database for tracking videos"""
+        """Initialize SQLite database for tracking videos and settings"""
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
 
+        # Videos table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS videos (
                 id TEXT PRIMARY KEY,
@@ -49,6 +55,7 @@ class TikTokMonitor:
             )
         ''')
 
+        # Monitored users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS monitored_users (
                 username TEXT PRIMARY KEY,
@@ -59,10 +66,79 @@ class TikTokMonitor:
                 enabled INTEGER DEFAULT 1
             )
         ''')
+        
+        # Settings table (for notifications and other preferences)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
 
         conn.commit()
         conn.close()
         logger.success("Database initialized")
+
+    def _load_notification_preference(self):
+        """Load notification preference from database"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT value FROM settings WHERE key = ?', ('notifications_enabled',))
+            result = cursor.fetchone()
+            
+            if result and result[0] == '1':
+                notifier.enable()
+            else:
+                notifier.disable()
+                
+        except Exception as e:
+            logger.debug(f"Could not load notification preference: {e}")
+            notifier.disable()  # Default: disabled
+        finally:
+            conn.close()
+
+    def _save_notification_preference(self):
+        """Save notification preference to database"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        try:
+            value = '1' if notifier.enabled else '0'
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value)
+                VALUES (?, ?)
+            ''', ('notifications_enabled', value))
+            conn.commit()
+            logger.debug(f"Saved notification preference: {notifier.enabled}")
+        except Exception as e:
+            logger.error(f"Could not save notification preference: {e}")
+        finally:
+            conn.close()
+
+    def toggle_notifications(self):
+        """Toggle desktop notifications on/off"""
+        if not notifier.is_available():
+            logger.error("Desktop notifications not available")
+            logger.info("Install with: pip install plyer")
+            return False
+        
+        new_state = notifier.toggle()
+        self._save_notification_preference()
+        
+        status = "enabled" if new_state else "disabled"
+        logger.info(f"Desktop notifications {status}")
+        
+        # Send test notification if enabled
+        if new_state:
+            notifier.send(
+                title="🔔 Notifications Enabled",
+                message="You will be notified when new videos are downloaded",
+                timeout=5
+            )
+        
+        return new_state
 
     def add_user_to_monitor(self, username):
         """Add a user to monitoring list"""
@@ -252,12 +328,13 @@ class TikTokMonitor:
     def get_user_videos(self, username, max_videos=5):
         """
         Get latest videos from a user profile with retry logic
+        Uses yt-dlp to extract video list without downloading
         """
         url = f"https://www.tiktok.com/@{username}"
 
         ydl_opts = {
             'quiet': True,
-            'extract_flat': False,
+            'extract_flat': False,  # Need full metadata for timestamps
             'playlistend': max_videos,
             'geo_bypass': True,
             'geo_bypass_country': 'US',
@@ -286,6 +363,7 @@ class TikTokMonitor:
                                 'timestamp': entry.get('timestamp', 0),
                                 'upload_date': entry.get('upload_date', ''),
                             })
+                    # Sort by timestamp descending (newest first)
                     videos.sort(key=lambda x: x['timestamp'], reverse=True)
                     logger.debug(f"Found {len(videos)} videos for @{username}")
                     return videos
@@ -325,6 +403,7 @@ class TikTokMonitor:
     def monitor_user(self, username, download_new=True):
         """
         Monitor a user and download new videos with retry logic
+        Uses timestamp-based filtering to avoid false positives
         """
         logger.info("")
         logger.info("=" * 60)
@@ -359,9 +438,11 @@ class TikTokMonitor:
                     new_videos = []
                     for video in videos:
                         video_timestamp = video.get('timestamp', 0)
+                        
+                        # Video is new if timestamp > last_timestamp OR not in database
                         if video_timestamp > last_timestamp or not self.is_video_downloaded(video['id']):
                             if video_timestamp > 0 and video_timestamp <= last_timestamp:
-                                continue
+                                continue  # Skip: timestamp exists but is older
                             new_videos.append(video)
 
                     if not new_videos:
@@ -371,7 +452,7 @@ class TikTokMonitor:
 
                     logger.new_videos_found(len(new_videos), username)
                     
-                    # Display new videos
+                    # Display new videos info
                     for i, video in enumerate(new_videos, 1):
                         video_date = datetime.fromtimestamp(video['timestamp']) if video['timestamp'] > 0 else None
                         date_str = video_date.strftime('%Y-%m-%d %H:%M') if video_date else 'Unknown date'
@@ -385,7 +466,7 @@ class TikTokMonitor:
                         if download_new:
                             logger.info(f"\n📥 [{i}/{len(new_videos)}] Downloading: {video['title'][:50]}...")
 
-                            # Anti-bot delay
+                            # Anti-bot delay between downloads
                             if i > 1:
                                 delay = random.uniform(5, 15)
                                 logger.debug(f"Anti-bot delay: {delay:.1f}s")
@@ -398,6 +479,14 @@ class TikTokMonitor:
                                     self.save_video_metadata(info, filepath)
                                     downloaded += 1
                                     logger.download_complete(filepath, username)
+                                    
+                                    # Send desktop notification (if enabled)
+                                    notify_video(
+                                        username=username,
+                                        title=info.get('title', 'Unknown'),
+                                        views=info.get('view_count'),
+                                        likes=info.get('like_count')
+                                    )
 
                                     video_timestamp = info.get('timestamp', 0)
                                     if video_timestamp > newest_timestamp:
@@ -434,7 +523,13 @@ class TikTokMonitor:
         return 0
 
     def start_monitoring(self, interval_minutes=30, max_iterations=None):
-        """Start continuous monitoring loop with retry logic"""
+        """
+        Start continuous monitoring loop with retry logic
+        
+        Args:
+            interval_minutes: Minutes between each check
+            max_iterations: Maximum number of iterations (None = infinite)
+        """
         users = self.get_monitored_users()
 
         if not users:
@@ -465,7 +560,7 @@ class TikTokMonitor:
                         total_downloaded += downloaded
                         consecutive_errors = 0  # Reset on success
 
-                        # Anti-bot delay between users
+                        # Anti-bot delay between different users
                         if len(users) > 1:
                             delay = random.uniform(10, 30)
                             logger.debug(f"Delay before next user: {delay:.1f}s")
@@ -490,7 +585,7 @@ class TikTokMonitor:
                     logger.info(f"\n🏁 Reached limit of {max_iterations} iterations")
                     break
 
-                # Wait for next check with jitter
+                # Calculate next check with random variation (±10%)
                 base_wait = interval_minutes * 60
                 wait_with_jitter(base_wait, jitter_percent=0.1)
                 
@@ -537,12 +632,12 @@ class TikTokMonitor:
 
 
 def interactive_menu(monitor):
-    """Interactive menu with user management"""
+    """Interactive menu with user management and notifications"""
     while True:
-        print("\n╔═══════════════════════════════════════════════════════════╗")
-        print("║              TikTok Monitor - Main Menu v2.1               ║")
-        print("║       With Automatic Retry & Professional Logging          ║")
-        print("╚═══════════════════════════════════════════════════════════╝")
+        print("  ╔═════════════════════════════════════════════════════════╗")
+        print("  ║              TikTok Monitor - Main Menu v2.2            ║")
+        print("  ║                                                         ║")
+        print("  ╚═════════════════════════════════════════════════════════╝")
         print("\n👥 USER MANAGEMENT")
         print("  1. ➕ Add user to monitor")
         print("  2. 📋 List monitored users")
@@ -552,8 +647,9 @@ def interactive_menu(monitor):
         print("\n🔍 MONITORING")
         print("  6. 🔍 Check for new videos (once)")
         print("  7. 🤖 Start automatic monitoring")
-        print("\n📊 STATISTICS")
+        print("\n📊 STATISTICS & SETTINGS")
         print("  8. 📊 Show statistics")
+        print(f"  9. 🔔 Toggle notifications (currently: {notifier.get_status_text()})")
         print("\n  0. 🚪 Exit")
         print()
 
@@ -615,6 +711,9 @@ def interactive_menu(monitor):
         elif choice == '8':
             monitor.get_stats()
 
+        elif choice == '9':
+            monitor.toggle_notifications()
+
         elif choice == '0':
             logger.info("👋 Goodbye!")
             break
@@ -626,7 +725,7 @@ def interactive_menu(monitor):
 def main():
     """Main function with interactive menu"""
     parser = argparse.ArgumentParser(
-        description='TikTok Monitor v2.1 - With automatic retry and professional logging',
+        description='TikTok Monitor v2.2 - With automatic retry, logging, and notifications',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -641,6 +740,12 @@ Examples:
 
   # Show statistics
   %(prog)s --stats
+
+Features:
+  - Automatic retry on network/API errors
+  - Professional logging (logs/ folder)
+  - Desktop notifications (enable from menu option 9)
+  - Timestamp-based filtering (no duplicates)
         """
     )
 

@@ -165,7 +165,7 @@ def export_cookies_instructions():
     """Show instructions for exporting cookies"""
     instructions = """
 ╔═══════════════════════════════════════════════════════════════════════╗
-║          HOW TO EXPORT COOKIES FROM TIKTOK                             ║
+║          HOW TO EXPORT COOKIES FROM TIKTOK                            ║
 ╚═══════════════════════════════════════════════════════════════════════╝
 
 To download videos with geographical restrictions or that require login:
@@ -267,7 +267,7 @@ Examples:
             
         else:
             logger.info("╔═══════════════════════════════════════════════════════════╗")
-            logger.info("║        TikTok Video Downloader - by gabrielrahbar          ║")
+            logger.info("║        TikTok Video Downloader                            ║")
             logger.info("╚═══════════════════════════════════════════════════════════╝")
             logger.info("")
             logger.info("For videos with geo-restrictions, use: --cookies tiktok_cookies.txt")
