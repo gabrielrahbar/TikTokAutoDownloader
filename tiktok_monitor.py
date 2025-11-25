@@ -2,7 +2,7 @@
 """
 TikTok Monitor - Automatically monitor and download new TikTok videos
 Tracks last seen video and downloads only truly new ones using timestamps
-Version: 2.2 - Added retry logic, professional logging, and desktop notifications
+Version: 2.3 - Added configuration file support
 """
 
 import yt_dlp
@@ -16,10 +16,17 @@ import argparse
 from logger_manager import logger
 from retry_utils import retry_on_network_error, retry_on_api_error, RetryContext, wait_with_jitter
 from notification_manager import notifier, notify_video
+from config_manager import get_config
 
 
 class TikTokMonitor:
-    def __init__(self, output_dir="./tiktok_downloads", db_file="tiktok_monitor.db"):
+    def __init__(self, output_dir=None, db_file=None):
+        # Use config if not specified
+        if output_dir is None:
+            output_dir = get_config('monitor.output_dir', './tiktok_downloads')
+        if db_file is None:
+            db_file = get_config('database.db_file', 'tiktok_monitor.db')
+
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.db_file = db_file
@@ -325,19 +332,22 @@ class TikTokMonitor:
         logger.debug(f"Saved metadata for video {video_id}")
 
     @retry_on_api_error(max_retries=5)
-    def get_user_videos(self, username, max_videos=5):
+    def get_user_videos(self, username, max_videos=None):
         """
         Get latest videos from a user profile with retry logic
         Uses yt-dlp to extract video list without downloading
         """
+        if max_videos is None:
+            max_videos = get_config('monitor.max_videos_per_check', 5)
+
         url = f"https://www.tiktok.com/@{username}"
 
         ydl_opts = {
             'quiet': True,
             'extract_flat': False,  # Need full metadata for timestamps
             'playlistend': max_videos,
-            'geo_bypass': True,
-            'geo_bypass_country': 'US',
+            'geo_bypass': get_config('download.geo_bypass', True),
+            'geo_bypass_country': get_config('download.geo_bypass_country', 'US'),
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
@@ -377,11 +387,11 @@ class TikTokMonitor:
     def download_video(self, url):
         """Download a single video with retry logic"""
         ydl_opts = {
-            'format': 'best',
+            'format': get_config('download.quality', 'best'),
             'outtmpl': str(self.output_dir / '%(uploader)s_%(upload_date)s_%(title)s.%(ext)s'),
             'quiet': True,
-            'geo_bypass': True,
-            'geo_bypass_country': 'US',
+            'geo_bypass': get_config('download.geo_bypass', True),
+            'geo_bypass_country': get_config('download.geo_bypass_country', 'US'),
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             },
@@ -497,9 +507,10 @@ class TikTokMonitor:
                         if download_new:
                             logger.info(f"\n📥 [{i}/{len(new_videos)}] Downloading: {video['title'][:50]}...")
 
-                            # Anti-bot delay between downloads
+                            # Anti-bot delay between downloads - FROM CONFIG
                             if i > 1:
-                                delay = random.uniform(5, 15)
+                                delays = get_config('monitor.anti_bot_delays.between_downloads', [5, 15])
+                                delay = random.uniform(delays[0], delays[1])
                                 logger.debug(f"Anti-bot delay: {delay:.1f}s")
                                 time.sleep(delay)
 
@@ -553,14 +564,18 @@ class TikTokMonitor:
 
         return 0
 
-    def start_monitoring(self, interval_minutes=30, max_iterations=None):
+    def start_monitoring(self, interval_minutes=None, max_iterations=None):
         """
         Start continuous monitoring loop with retry logic
 
         Args:
-            interval_minutes: Minutes between each check
+            interval_minutes: Minutes between each check (override config)
             max_iterations: Maximum number of iterations (None = infinite)
         """
+        # Use config if not specified
+        if interval_minutes is None:
+            interval_minutes = get_config('monitor.interval_minutes', 30)
+
         users = self.get_monitored_users()
 
         if not users:
@@ -591,9 +606,10 @@ class TikTokMonitor:
                         total_downloaded += downloaded
                         consecutive_errors = 0  # Reset on success
 
-                        # Anti-bot delay between different users
+                        # Anti-bot delay between different users - FROM CONFIG
                         if len(users) > 1:
-                            delay = random.uniform(10, 30)
+                            delays = get_config('monitor.anti_bot_delays.between_users', [10, 30])
+                            delay = random.uniform(delays[0], delays[1])
                             logger.debug(f"Delay before next user: {delay:.1f}s")
                             time.sleep(delay)
 
@@ -666,15 +682,15 @@ def interactive_menu(monitor):
     """Interactive menu with user management and notifications"""
     while True:
         print(" ╔═══════════════════════════════════════════════════════════╗")
-        print(" ║              TikTok Monitor - Main Menu v2.2              ║")
+        print(" ║              TikTok Monitor - Main Menu v2.3              ║")
         print(" ║                                                           ║")
         print(" ╚═══════════════════════════════════════════════════════════╝")
         print("\n👥 USER MANAGEMENT")
-        print("  1. ➕  Add user to monitor")
+        print("  1. ➕ Add user to monitor")
         print("  2. 📋 List monitored users")
-        print("  3. ❌  Remove user from monitoring")
-        print("  4. 🗑️Delete user permanently")
-        print("  5. ♻️ Re-enable disabled user")
+        print("  3. ❌ Remove user from monitoring")
+        print("  4. 🗑️  Delete user permanently")
+        print("  5. ♻️  Re-enable disabled user")
         print("\n🔍 MONITORING")
         print("  6. 🔍 Check for new videos (once)")
         print("  7. 🤖 Start automatic monitoring")
@@ -739,7 +755,7 @@ def interactive_menu(monitor):
 
         elif choice == '7':
             interval = input("\nMinutes between checks [30]: ").strip()
-            interval = int(interval) if interval.isdigit() else 30
+            interval = int(interval) if interval.isdigit() else get_config('monitor.interval_minutes', 30)
             monitor.start_monitoring(interval_minutes=interval)
 
         elif choice == '8':
@@ -759,15 +775,18 @@ def interactive_menu(monitor):
 def main():
     """Main function with interactive menu"""
     parser = argparse.ArgumentParser(
-        description='TikTok Monitor v2.2 - With automatic retry, logging, and notifications',
+        description='TikTok Monitor v2.3 - With configuration file support',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Interactive mode
+  # Interactive mode (uses config.yaml if available)
   %(prog)s
 
-  # Start automatic monitoring
-  %(prog)s --auto --interval 30 --users charlidamelio khaby.lame
+  # Start automatic monitoring (config settings or defaults)
+  %(prog)s --auto --users charlidamelio khaby.lame
+
+  # Override config interval
+  %(prog)s --auto --interval 45 --users charlidamelio
 
   # Check once only
   %(prog)s --check-once --users charlidamelio
@@ -776,29 +795,32 @@ Examples:
   %(prog)s --stats
 
 Features:
+  - Configuration file support (config.yaml)
   - Automatic retry on network/API errors
   - Professional logging (logs/ folder)
-  - Desktop notifications (enable from menu option 9)
+  - Desktop notifications
   - Timestamp-based filtering (no duplicates)
         """
     )
 
     parser.add_argument('--auto', action='store_true',
                         help='Start continuous automatic monitoring')
-    parser.add_argument('--interval', type=int, default=30,
-                        help='Minutes between checks (default: 30)')
+    parser.add_argument('--interval', type=int, default=None,
+                        help='Minutes between checks (overrides config)')
     parser.add_argument('--users', nargs='+',
                         help='Users to monitor (without @)')
     parser.add_argument('--check-once', action='store_true',
                         help='Check once and exit')
     parser.add_argument('--stats', action='store_true',
                         help='Show statistics and exit')
-    parser.add_argument('-o', '--output', default='./tiktok_downloads',
-                        help='Output folder (default: ./tiktok_downloads)')
+    parser.add_argument('-o', '--output', default=None,
+                        help='Output folder (overrides config)')
 
     args = parser.parse_args()
 
-    monitor = TikTokMonitor(output_dir=args.output)
+    # Use config for output_dir if not specified
+    output_dir = args.output if args.output is not None else get_config('monitor.output_dir', './tiktok_downloads')
+    monitor = TikTokMonitor(output_dir=output_dir)
 
     if args.stats:
         monitor.get_stats()

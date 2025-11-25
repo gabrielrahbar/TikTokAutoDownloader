@@ -15,10 +15,14 @@ Automatically monitor TikTok users and intelligently download only new videos. F
 - 🌍 **Automatic geo-bypass** - Circumvents geographical restrictions
 - 🍪 **Cookie support** - For restricted or private videos
 - ⏱️ **Anti-bot delays** - Randomized delays between downloads
+- 🔔 **Desktop notifications** - Get alerted when new videos are downloaded
+- 📝 **Professional logging** - Detailed logs with file and console output
+- 🔄 **Automatic retry** - Handles network errors and rate limiting
 - 📊 **Reports & statistics** - View downloads, views, likes
 - 👥 **Multi-user** - Monitor multiple users simultaneously
 - 🎨 **Interactive menu** - User-friendly CLI with guided options
 - 📁 **Organized downloads** - Files named by author and date
+- ⚙️ **Configuration file** - Customize settings with config.yaml
 
 ## Highly Recommended
 
@@ -86,7 +90,7 @@ You'll see this menu:
 
 ```
 ╔════════════════════════════════════════════════════════════╗
-║              TikTok Monitor - Main Menu v2.0               ║
+║              TikTok Monitor - Main Menu v2.3               ║
 ╚════════════════════════════════════════════════════════════╝
 
 👥 USER MANAGEMENT
@@ -148,6 +152,22 @@ python manage_users.py --delete username
 
 # Re-enable disabled user
 python manage_users.py --enable username
+```
+## ⚙️ Configuration File
+
+Customizable settings using a `config.yaml` file in the project root.
+
+```yaml
+monitor:
+  interval_minutes: 30
+  output_dir: "./tiktok_downloads"
+
+download:
+  quality: "best" 
+  geo_bypass: true
+
+notifications:
+  enabled: false
 ```
 
 ## 📊 Reports & Statistics

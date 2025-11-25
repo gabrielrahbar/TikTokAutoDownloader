@@ -1,0 +1,27 @@
+# TikTok Auto Downloader Configuration
+# Copy this file to config.yaml and customize your settings
+
+monitor:
+  interval_minutes: 30
+  output_dir: "./tiktok_downloads"
+  max_videos_per_check: 5
+  anti_bot_delays:
+    between_downloads: [5, 15]   # min, max seconds between downloads
+    between_users: [10, 30]      # min, max seconds between different users
+
+download:
+  quality: "best"
+  with_audio: true
+  geo_bypass: true
+  geo_bypass_country: "US"
+
+notifications:
+  enabled: false
+  timeout: 5
+
+database:
+  db_file: "tiktok_monitor.db"
+
+logging:
+  log_dir: "logs"
+  log_level: "INFO"

@@ -10,3 +10,6 @@ requests>=2.31.0
 
 # Desktop notifications
 plyer>=2.1.0
+
+# Configuration management
+PyYAML>=6.0
