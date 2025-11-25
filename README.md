@@ -33,9 +33,12 @@ Automatically monitor TikTok users and intelligently download only new videos. F
 
 **Recommended VPN locations:**
 - 🇺🇸 United States (best compatibility)
-- 🇬🇧 United Kingdom
 - 🇨🇦 Canada
 - 🇩🇪 Germany
+
+**IMPORTANT ⚠️ Detailed restrictions list:** [View complete country restrictions list](docs/restricted_countries.md)
+
+**Note:** Restrictions change frequently. Some videos may be unavailable in specific regions regardless of country-level restrictions.
 
 **Setup:**
 ```bash
