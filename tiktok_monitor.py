@@ -2,7 +2,7 @@
 """
 TikTok Monitor - Automatically monitor and download new TikTok videos
 Tracks last seen video and downloads only truly new ones using timestamps
-Version: 2.3 - Added configuration file support
+Version: 2.4 - Added user-friendly error handling
 """
 
 import yt_dlp
@@ -17,6 +17,7 @@ from logger_manager import logger
 from retry_utils import retry_on_network_error, retry_on_api_error, RetryContext, wait_with_jitter
 from notification_manager import notifier, notify_video
 from config_manager import get_config
+from error_handler import ErrorHandler, handle_error, is_retryable_error, get_retry_wait_time
 
 
 class TikTokMonitor:
@@ -331,11 +332,9 @@ class TikTokMonitor:
         conn.close()
         logger.debug(f"Saved metadata for video {video_id}")
 
-    @retry_on_api_error(max_retries=5)
     def get_user_videos(self, username, max_videos=None):
         """
-        Get latest videos from a user profile with retry logic
-        Uses yt-dlp to extract video list without downloading
+        Get latest videos from a user profile with user-friendly error handling
         """
         if max_videos is None:
             max_videos = get_config('monitor.max_videos_per_check', 5)
@@ -344,7 +343,7 @@ class TikTokMonitor:
 
         ydl_opts = {
             'quiet': True,
-            'extract_flat': False,  # Need full metadata for timestamps
+            'extract_flat': False,
             'playlistend': max_videos,
             'geo_bypass': get_config('download.geo_bypass', True),
             'geo_bypass_country': get_config('download.geo_bypass_country', 'US'),
@@ -356,36 +355,46 @@ class TikTokMonitor:
             'retries': 3,
         }
 
-        try:
-            logger.debug(f"Fetching videos for @{username}")
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.debug(f"Fetching videos for @{username} (attempt {attempt}/{max_retries})")
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
 
-                if 'entries' in info:
-                    videos = []
-                    for entry in info['entries']:
-                        if entry:
-                            videos.append({
-                                'id': entry.get('id', ''),
-                                'url': entry.get('webpage_url', ''),
-                                'title': entry.get('title', ''),
-                                'timestamp': entry.get('timestamp', 0),
-                                'upload_date': entry.get('upload_date', ''),
-                            })
-                    # Sort by timestamp descending (newest first)
-                    videos.sort(key=lambda x: x['timestamp'], reverse=True)
-                    logger.debug(f"Found {len(videos)} videos for @{username}")
-                    return videos
-                return []
+                    if 'entries' in info:
+                        videos = []
+                        for entry in info['entries']:
+                            if entry:
+                                videos.append({
+                                    'id': entry.get('id', ''),
+                                    'url': entry.get('webpage_url', ''),
+                                    'title': entry.get('title', ''),
+                                    'timestamp': entry.get('timestamp', 0),
+                                    'upload_date': entry.get('upload_date', ''),
+                                })
+                        videos.sort(key=lambda x: x['timestamp'], reverse=True)
+                        logger.debug(f"Found {len(videos)} videos for @{username}")
+                        return videos
+                    return []
 
-        except Exception as e:
-            logger.error(f"Error fetching videos for @{username}: {e}")
-            raise  # Re-raise for retry logic
+            except Exception as e:
+                user_error = handle_error(e, url, username, show_technical=(attempt == max_retries))
+                
+                if attempt < max_retries and is_retryable_error(user_error):
+                    wait_time = get_retry_wait_time(user_error)
+                    logger.warning(f"⏳ Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(f"Failed to fetch videos for @{username} after {max_retries} attempts")
+                    return []
+        
+        return []
 
-    @retry_on_network_error(max_retries=3)
-    def download_video(self, url):
-        """Download a single video with retry logic"""
+    def download_video(self, url, username=None):
+        """Download a single video with user-friendly error handling"""
         ydl_opts = {
             'format': get_config('download.quality', 'best'),
             'outtmpl': str(self.output_dir / '%(uploader)s_%(upload_date)s_%(title)s.%(ext)s'),
@@ -400,179 +409,173 @@ class TikTokMonitor:
             'fragment_retries': 3,
         }
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                return info, filename
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                if attempt > 1:
+                    logger.info(f"🔄 Retry attempt {attempt}/{max_retries}")
 
-        except Exception as e:
-            logger.error(f"Download error for {url}: {e}")
-            raise  # Re-raise for retry logic
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    return info, filename
+
+            except Exception as e:
+                user_error = handle_error(e, url, username, show_technical=(attempt == max_retries))
+                
+                if attempt < max_retries and is_retryable_error(user_error):
+                    wait_time = get_retry_wait_time(user_error)
+                    logger.warning(f"⏳ Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    if not is_retryable_error(user_error):
+                        logger.error("❌ This error cannot be automatically resolved - skipping video")
+                    return None, None
+        
+        return None, None
 
     def monitor_user(self, username, download_new=True):
         """
-        Monitor a user and download new videos with retry logic
-        Uses timestamp-based filtering to avoid false positives
+        Monitor a user and download new videos with user-friendly error handling
         """
         logger.info("")
         logger.info("=" * 60)
         logger.info(f"🔍 Checking @{username}...")
         logger.info("=" * 60)
 
-        # Use RetryContext for the entire monitoring process
-        with RetryContext(max_retries=3, delay_range=(30, 60)) as retry:
-            while retry.should_retry():
-                try:
-                    # Get last check time from database (for display only)
-                    conn = sqlite3.connect(self.db_file)
-                    cursor = conn.cursor()
-                    cursor.execute('SELECT last_check FROM monitored_users WHERE username = ?', (username,))
-                    result = cursor.fetchone()
-                    conn.close()
+        try:
+            # Get last check time from database
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('SELECT last_check FROM monitored_users WHERE username = ?', (username,))
+            result = cursor.fetchone()
+            conn.close()
 
-                    if result and result[0]:
-                        last_check_time = datetime.fromisoformat(result[0])
-                        logger.info(f"📅 Last check: {last_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            if result and result[0]:
+                last_check_time = datetime.fromisoformat(result[0])
+                logger.info(f"📅 Last check: {last_check_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                logger.info("📅 First time monitoring this user")
+
+            last_timestamp = self.get_last_video_timestamp(username)
+
+            # Get latest videos
+            logger.debug("Fetching video metadata...")
+            videos = self.get_user_videos(username)
+
+            if not videos:
+                logger.warning(f"No videos found for @{username}")
+                
+                # Update last_check
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE monitored_users 
+                    SET last_check = ?
+                    WHERE username = ?
+                ''', (datetime.now().isoformat(), username))
+                conn.commit()
+                conn.close()
+                
+                return 0
+
+            logger.info(f"📊 Found {len(videos)} recent videos")
+
+            # Filter new videos
+            new_videos = []
+            for video in videos:
+                video_timestamp = video.get('timestamp', 0)
+                
+                if video_timestamp > last_timestamp or not self.is_video_downloaded(video['id']):
+                    if video_timestamp > 0 and video_timestamp <= last_timestamp:
+                        continue
+                    new_videos.append(video)
+
+            if not new_videos:
+                logger.info(f"✅ No new videos for @{username}")
+                
+                # Update last_check
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE monitored_users 
+                    SET last_check = ?
+                    WHERE username = ?
+                ''', (datetime.now().isoformat(), username))
+                conn.commit()
+                conn.close()
+                
+                return 0
+
+            logger.new_videos_found(len(new_videos), username)
+
+            # Display new videos
+            for i, video in enumerate(new_videos, 1):
+                video_date = datetime.fromtimestamp(video['timestamp']) if video['timestamp'] > 0 else None
+                date_str = video_date.strftime('%Y-%m-%d %H:%M') if video_date else 'Unknown date'
+                logger.info(f"   {i}. [{date_str}] {video['title'][:50]}")
+
+            downloaded = 0
+            newest_timestamp = last_timestamp
+
+            # Download new videos
+            for i, video in enumerate(new_videos, 1):
+                if download_new:
+                    logger.info(f"\n📥 [{i}/{len(new_videos)}] Downloading: {video['title'][:50]}...")
+
+                    # Anti-bot delay
+                    if i > 1:
+                        delays = get_config('monitor.anti_bot_delays.between_downloads', [5, 15])
+                        delay = random.uniform(delays[0], delays[1])
+                        logger.debug(f"Anti-bot delay: {delay:.1f}s")
+                        time.sleep(delay)
+
+                    info, filepath = self.download_video(video['url'], username)
+
+                    if info and filepath:
+                        self.save_video_metadata(info, filepath)
+                        downloaded += 1
+                        logger.download_complete(filepath, username)
+
+                        # Send notification
+                        notify_video(
+                            username=username,
+                            title=info.get('title', 'Unknown'),
+                            views=info.get('view_count'),
+                            likes=info.get('like_count')
+                        )
+
+                        video_timestamp = info.get('timestamp', 0)
+                        if video_timestamp > newest_timestamp:
+                            newest_timestamp = video_timestamp
                     else:
-                        logger.info("📅 First time monitoring this user")
+                        logger.warning(f"⚠️  Skipping video due to error")
 
-                    # Keep the timestamp logic intact - this is the core functionality
-                    last_timestamp = self.get_last_video_timestamp(username)
+            # Update timestamp and count
+            if newest_timestamp > last_timestamp:
+                self.update_last_video_timestamp(username, newest_timestamp)
+                logger.debug(f"Updated timestamp: {datetime.fromtimestamp(newest_timestamp)}")
 
-                    # Get latest videos
-                    logger.debug("Fetching video metadata...")
-                    videos = self.get_user_videos(username)
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE monitored_users 
+                SET total_videos = total_videos + ?, last_check = ?
+                WHERE username = ?
+            ''', (downloaded, datetime.now().isoformat(), username))
+            conn.commit()
+            conn.close()
 
-                    if not videos:
-                        logger.warning(f"No videos found for @{username}")
+            logger.info(f"\n✅ Monitoring complete: {downloaded}/{len(new_videos)} videos downloaded successfully")
+            return downloaded
 
-                        # UPDATE LAST_CHECK EVEN WHEN NO VIDEOS ARE FOUND
-                        conn = sqlite3.connect(self.db_file)
-                        cursor = conn.cursor()
-                        cursor.execute('''
-                            UPDATE monitored_users 
-                            SET last_check = ?
-                            WHERE username = ?
-                        ''', (datetime.now().isoformat(), username))
-                        conn.commit()
-                        conn.close()
-
-                        retry.success()
-                        return 0
-
-                    logger.info(f"📊 Found {len(videos)} recent videos")
-
-                    # Filter new videos
-                    new_videos = []
-                    for video in videos:
-                        video_timestamp = video.get('timestamp', 0)
-
-                        # Video is new if timestamp > last_timestamp OR not in database
-                        if video_timestamp > last_timestamp or not self.is_video_downloaded(video['id']):
-                            if video_timestamp > 0 and video_timestamp <= last_timestamp:
-                                continue  # Skip: timestamp exists but is older
-                            new_videos.append(video)
-
-                    if not new_videos:
-                        logger.info(f"✅ No new videos for @{username}")
-
-                        # UPDATE LAST_CHECK EVEN WHEN NO NEW VIDEOS ARE FOUND
-                        conn = sqlite3.connect(self.db_file)
-                        cursor = conn.cursor()
-                        cursor.execute('''
-                            UPDATE monitored_users 
-                            SET last_check = ?
-                            WHERE username = ?
-                        ''', (datetime.now().isoformat(), username))
-                        conn.commit()
-                        conn.close()
-
-                        retry.success()
-                        return 0
-
-                    logger.new_videos_found(len(new_videos), username)
-
-                    # Display new videos info
-                    for i, video in enumerate(new_videos, 1):
-                        video_date = datetime.fromtimestamp(video['timestamp']) if video['timestamp'] > 0 else None
-                        date_str = video_date.strftime('%Y-%m-%d %H:%M') if video_date else 'Unknown date'
-                        logger.info(f"   {i}. [{date_str}] {video['title'][:50]}")
-
-                    downloaded = 0
-                    newest_timestamp = last_timestamp
-
-                    # Download new videos
-                    for i, video in enumerate(new_videos, 1):
-                        if download_new:
-                            logger.info(f"\n📥 [{i}/{len(new_videos)}] Downloading: {video['title'][:50]}...")
-
-                            # Anti-bot delay between downloads - FROM CONFIG
-                            if i > 1:
-                                delays = get_config('monitor.anti_bot_delays.between_downloads', [5, 15])
-                                delay = random.uniform(delays[0], delays[1])
-                                logger.debug(f"Anti-bot delay: {delay:.1f}s")
-                                time.sleep(delay)
-
-                            try:
-                                info, filepath = self.download_video(video['url'])
-
-                                if info and filepath:
-                                    self.save_video_metadata(info, filepath)
-                                    downloaded += 1
-                                    logger.download_complete(filepath, username)
-
-                                    # Send desktop notification (if enabled)
-                                    notify_video(
-                                        username=username,
-                                        title=info.get('title', 'Unknown'),
-                                        views=info.get('view_count'),
-                                        likes=info.get('like_count')
-                                    )
-
-                                    video_timestamp = info.get('timestamp', 0)
-                                    if video_timestamp > newest_timestamp:
-                                        newest_timestamp = video_timestamp
-
-                            except Exception as e:
-                                logger.download_failed(video['url'], username, str(e))
-                                # Continue with other videos
-
-                    # Update timestamp
-                    if newest_timestamp > last_timestamp:
-                        self.update_last_video_timestamp(username, newest_timestamp)
-                        logger.debug(f"Updated timestamp: {datetime.fromtimestamp(newest_timestamp)}")
-
-                    # Update total count AND last_check
-                    conn = sqlite3.connect(self.db_file)
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        UPDATE monitored_users 
-                        SET total_videos = total_videos + ?, last_check = ?
-                        WHERE username = ?
-                    ''', (downloaded, datetime.now().isoformat(), username))
-                    conn.commit()
-                    conn.close()
-
-                    logger.info(f"\n✅ Monitoring complete: {downloaded} new videos downloaded")
-                    retry.success()
-                    return downloaded
-
-                except Exception as e:
-                    logger.error(f"Error monitoring @{username}: {e}", exc_info=True)
-                    retry.failed(e)
-
-        return 0
+        except Exception as e:
+            logger.error(f"Error monitoring @{username}: {e}", exc_info=True)
+            return 0
 
     def start_monitoring(self, interval_minutes=None, max_iterations=None):
-        """
-        Start continuous monitoring loop with retry logic
-
-        Args:
-            interval_minutes: Minutes between each check (override config)
-            max_iterations: Maximum number of iterations (None = infinite)
-        """
-        # Use config if not specified
+        """Start continuous monitoring loop with user-friendly error handling"""
         if interval_minutes is None:
             interval_minutes = get_config('monitor.interval_minutes', 30)
 
@@ -606,7 +609,7 @@ class TikTokMonitor:
                         total_downloaded += downloaded
                         consecutive_errors = 0  # Reset on success
 
-                        # Anti-bot delay between different users - FROM CONFIG
+                        # Anti-bot delay between users
                         if len(users) > 1:
                             delays = get_config('monitor.anti_bot_delays.between_users', [10, 30])
                             delay = random.uniform(delays[0], delays[1])
@@ -627,12 +630,10 @@ class TikTokMonitor:
                 print(f"📥 New videos downloaded: {total_downloaded}")
                 print("=" * 60)
 
-                # Check if should stop
                 if max_iterations and iteration >= max_iterations:
                     print(f"\n🏁 Reached limit of {max_iterations} iterations")
                     break
 
-                # Calculate next check with random variation (±10%)
                 base_wait = interval_minutes * 60
                 next_check = datetime.now() + timedelta(seconds=base_wait)
                 print(f"\n⏰ Next check: {next_check.strftime('%H:%M:%S')}")
@@ -667,7 +668,7 @@ class TikTokMonitor:
         conn.close()
 
         logger.info("\n╔═══════════════════════════════════════════════════════════╗")
-        logger.info("║                  Monitor Statistics                         ║")
+        logger.info("║                  Monitor Statistics                       ║")
         logger.info("╚═══════════════════════════════════════════════════════════╝")
         logger.info(f"\n📊 Total videos downloaded: {total_videos}")
         logger.info(f"👥 Monitored users: {total_users}")
@@ -681,9 +682,9 @@ class TikTokMonitor:
 def interactive_menu(monitor):
     """Interactive menu with user management and notifications"""
     while True:
-        print(" ╔═══════════════════════════════════════════════════════════╗")
-        print(" ║              TikTok Monitor - Main Menu v2.3              ║")
-        print(" ║                                                           ║")
+        print("\n ╔═══════════════════════════════════════════════════════════╗")
+        print(" ║              TikTok Monitor - Main Menu v2.4              ║")
+        print(" ║          (User-Friendly Error Handling)                   ║")
         print(" ╚═══════════════════════════════════════════════════════════╝")
         print("\n👥 USER MANAGEMENT")
         print("  1. ➕ Add user to monitor")
@@ -713,17 +714,14 @@ def interactive_menu(monitor):
 
             if users:
                 print(f"\n{'=' * 100}")
-                print(
-                    f"{'Username':<20} {'Status':<12} {'Last Check':<20} {'Last Timestamp':<20} {'Total':<8} {'In DB':<8}")
+                print(f"{'Username':<20} {'Status':<12} {'Last Check':<20} {'Last Timestamp':<20} {'Total':<8} {'In DB':<8}")
                 print(f"{'=' * 100}")
 
                 for username, last_check, total, enabled, last_ts, db_videos in users:
                     status = "🟢 Active" if enabled else "🔴 Disabled"
-                    last_check_str = datetime.fromisoformat(last_check).strftime(
-                        '%d/%m/%Y %H:%M') if last_check else 'Never'
+                    last_check_str = datetime.fromisoformat(last_check).strftime('%d/%m/%Y %H:%M') if last_check else 'Never'
                     last_ts_str = datetime.fromtimestamp(last_ts).strftime('%d/%m/%Y %H:%M') if last_ts > 0 else 'None'
-                    print(
-                        f"@{username:<19} {status:<12} {last_check_str:<20} {last_ts_str:<20} {total:<8} {db_videos:<8}")
+                    print(f"@{username:<19} {status:<12} {last_check_str:<20} {last_ts_str:<20} {total:<8} {db_videos:<8}")
 
                 print(f"{'=' * 100}")
                 print(f"Total: {len(users)} users")
@@ -775,14 +773,14 @@ def interactive_menu(monitor):
 def main():
     """Main function with interactive menu"""
     parser = argparse.ArgumentParser(
-        description='TikTok Monitor v2.3 - With configuration file support',
+        description='TikTok Monitor v2.4 - With user-friendly error handling',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Interactive mode (uses config.yaml if available)
   %(prog)s
 
-  # Start automatic monitoring (config settings or defaults)
+  # Start automatic monitoring
   %(prog)s --auto --users charlidamelio khaby.lame
 
   # Override config interval
@@ -794,12 +792,11 @@ Examples:
   # Show statistics
   %(prog)s --stats
 
-Features:
-  - Configuration file support (config.yaml)
-  - Automatic retry on network/API errors
-  - Professional logging (logs/ folder)
-  - Desktop notifications
-  - Timestamp-based filtering (no duplicates)
+New in v2.4:
+  - User-friendly error messages with solutions
+  - Better error categorization (geo-restriction, rate limit, etc.)
+  - Smart retry logic based on error type
+  - Clear action items for each error
         """
     )
 
@@ -818,7 +815,6 @@ Features:
 
     args = parser.parse_args()
 
-    # Use config for output_dir if not specified
     output_dir = args.output if args.output is not None else get_config('monitor.output_dir', './tiktok_downloads')
     monitor = TikTokMonitor(output_dir=output_dir)
 

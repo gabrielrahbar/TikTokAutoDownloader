@@ -2,7 +2,7 @@
 """
 TikTok Video Downloader - Advanced Version with geo-restriction support
 Download videos from TikTok bypassing geographical restrictions
-Version: 2.3 - Added configuration file support
+Version: 2.4 - Added user-friendly error handling
 """
 
 import argparse
@@ -12,6 +12,8 @@ from pathlib import Path
 from logger_manager import logger
 from retry_utils import retry_on_network_error, retry_on_api_error, RetryContext
 from config_manager import get_config
+from error_handler import ErrorHandler, handle_error, is_retryable_error, get_retry_wait_time
+import time
 
 
 class TikTokDownloader:
@@ -34,16 +36,18 @@ class TikTokDownloader:
         if use_cookies and cookies_file:
             logger.debug(f"Using cookies: {cookies_file}")
 
-    @retry_on_network_error(max_retries=3)
-    @retry_on_api_error(max_retries=5)
-    def download(self, url, quality=None, with_audio=None):
+    def download(self, url, quality=None, with_audio=None, max_retries=3):
         """
-        Download a TikTok video with geo-restriction support and automatic retry
+        Download a TikTok video with user-friendly error handling and automatic retry
 
         Args:
             url: Video URL
             quality: Video quality ('best', 'worst', or specific resolution)
             with_audio: Include audio in download
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            str: Path to downloaded file, or None if failed
         """
         # Use config if not specified
         if quality is None:
@@ -56,7 +60,7 @@ class TikTokDownloader:
         ydl_opts = {
             'format': format_string,
             'outtmpl': str(self.output_dir / '%(title)s.%(ext)s'),
-            'quiet': True,  # Suppress yt-dlp output (we use logging)
+            'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
 
@@ -73,8 +77,6 @@ class TikTokDownloader:
             }] if with_audio else [],
 
             'ignoreerrors': False,
-
-            # Network retry settings (yt-dlp internal)
             'retries': 3,
             'fragment_retries': 3,
             'socket_timeout': 30,
@@ -88,63 +90,61 @@ class TikTokDownloader:
         if self.use_cookies and self.cookies_file:
             if os.path.exists(self.cookies_file):
                 ydl_opts['cookiefile'] = self.cookies_file
-                logger.debug(f"Cookies loaded: {cookies_file}")
+                logger.debug(f"Cookies loaded: {self.cookies_file}")
             else:
-                logger.warning(f"Cookie file not found: {cookies_file}")
+                logger.warning(f"Cookie file not found: {self.cookies_file}")
 
-        try:
-            logger.info(f"📥 Downloading: {url}")
-            logger.debug(f"Output: {self.output_dir}")
+        # Retry loop with user-friendly error handling
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"📥 Downloading: {url}")
+                if attempt > 1:
+                    logger.info(f"🔄 Retry attempt {attempt}/{max_retries}")
+                
+                logger.debug(f"Output: {self.output_dir}")
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
 
-                # Log success with details
-                logger.success("Download completed!")
-                logger.info(f"📄 File: {filename}")
-                logger.info(f"🎬 Title: {info.get('title', 'N/A')}")
-                logger.info(f"👤 Author: {info.get('uploader', 'Unknown')}")
-                logger.info(f"👁️  Views: {info.get('view_count', 0):,}")
-                logger.info(f"❤️  Likes: {info.get('like_count', 0):,}")
-                logger.info(f"💬 Comments: {info.get('comment_count', 0):,}")
+                    # Success!
+                    logger.success("Download completed!")
+                    logger.info(f"📄 File: {filename}")
+                    logger.info(f"🎬 Title: {info.get('title', 'N/A')}")
+                    logger.info(f"👤 Author: {info.get('uploader', 'Unknown')}")
+                    logger.info(f"👁️  Views: {info.get('view_count', 0):,}")
+                    logger.info(f"❤️  Likes: {info.get('like_count', 0):,}")
+                    logger.info(f"💬 Comments: {info.get('comment_count', 0):,}")
 
-                return filename
+                    return filename
 
-        except yt_dlp.utils.DownloadError as e:
-            error_msg = str(e)
-
-            # Handle specific error types
-            if 'geo' in error_msg.lower() or 'not available' in error_msg.lower():
-                logger.error("❌ Geo-restriction error detected!")
-                logger.geo_restriction_detected()
-                raise ConnectionError("Geo-restriction detected")  # Will trigger retry
-
-            elif 'private' in error_msg.lower():
-                logger.error("❌ Video is private")
-                raise ValueError("Video is private")  # Non-retryable
-
-            elif 'removed' in error_msg.lower() or 'deleted' in error_msg.lower():
-                logger.error("❌ Video has been removed")
-                raise ValueError("Video removed")  # Non-retryable
-
-            elif 'rate' in error_msg.lower() or '429' in error_msg:
-                logger.error("❌ Rate limited by TikTok")
-                raise ConnectionError("Rate limited")  # Will trigger retry with longer wait
-
-            else:
-                logger.error(f"❌ Download error: {error_msg}")
-                raise  # Re-raise for retry logic
-
-        except Exception as e:
-            logger.error(f"❌ Unexpected error: {str(e)}", exc_info=True)
-            raise
+            except Exception as e:
+                # Analyze error with user-friendly handler
+                user_error = handle_error(e, url, show_technical=(attempt == max_retries))
+                
+                # Check if should retry
+                if attempt < max_retries and is_retryable_error(user_error):
+                    wait_time = get_retry_wait_time(user_error)
+                    logger.warning(f"⏳ Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # Max retries reached or non-retryable error
+                    if not is_retryable_error(user_error):
+                        logger.error("❌ This error cannot be automatically resolved")
+                    else:
+                        logger.error(f"❌ Max retries ({max_retries}) reached")
+                    
+                    return None
+        
+        return None
 
     def download_multiple(self, urls):
-        """Download multiple videos with retry logic"""
+        """Download multiple videos with user-friendly error handling"""
         results = []
         successful = 0
         failed = 0
+        skipped = 0
 
         logger.info(f"Starting batch download: {len(urls)} videos")
 
@@ -154,13 +154,12 @@ class TikTokDownloader:
             logger.info(f"Video {i}/{len(urls)}")
             logger.info("=" * 60)
 
-            try:
-                result = self.download(url)
+            result = self.download(url)
+            
+            if result:
                 results.append(result)
                 successful += 1
-
-            except Exception as e:
-                logger.error(f"Failed to download video {i}: {str(e)}")
+            else:
                 results.append(None)
                 failed += 1
 
@@ -213,7 +212,7 @@ NOTE: Cookies expire periodically, you may need to update them.
 
 def main():
     parser = argparse.ArgumentParser(
-        description='TikTok Video Downloader with geo-restriction support and auto-retry',
+        description='TikTok Video Downloader v2.4 - With user-friendly error handling',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -231,6 +230,9 @@ Examples:
 
   # Show cookie instructions
   %(prog)s --help-cookies
+
+  # Show technical details on errors
+  %(prog)s --debug https://www.tiktok.com/@user/video/123456789
         """
     )
 
@@ -248,8 +250,10 @@ Examples:
                         help='Disable automatic geo-bypass (overrides config)')
     parser.add_argument('--help-cookies', action='store_true',
                         help='Show instructions for exporting cookies')
-    parser.add_argument('--max-retries', type=int, default=None,
-                        help='Maximum retry attempts (overrides defaults)')
+    parser.add_argument('--max-retries', type=int, default=3,
+                        help='Maximum retry attempts (default: 3)')
+    parser.add_argument('--debug', action='store_true',
+                        help='Show technical error details')
 
     args = parser.parse_args()
 
@@ -268,11 +272,6 @@ Examples:
         geo_bypass=geo_bypass
     )
 
-    # Override retry config if specified
-    if args.max_retries:
-        from retry_utils import RetryConfig
-        RetryConfig.MAX_DOWNLOAD_RETRIES = args.max_retries
-
     try:
         if args.file:
             logger.info(f"Reading URLs from file: {args.file}")
@@ -282,27 +281,33 @@ Examples:
             downloader.download_multiple(urls)
 
         elif args.url:
-            # Use config values if not specified in command line
             quality = args.quality if args.quality is not None else get_config('download.quality', 'best')
             with_audio = not args.no_audio if args.no_audio else get_config('download.with_audio', True)
 
-            downloader.download(args.url, quality, with_audio)
+            result = downloader.download(args.url, quality, with_audio, max_retries=args.max_retries)
+            
+            if not result:
+                return 1  # Exit with error code
 
         else:
             logger.info("╔═══════════════════════════════════════════════════════════╗")
-            logger.info("║        TikTok Video Downloader v2.3                       ║")
-            logger.info("║              (Configuration File Support)                 ║")
+            logger.info("║             TikTok Video Downloader v2.4                  ║")
+            logger.info("║                                                           ║")
             logger.info("╚═══════════════════════════════════════════════════════════╝")
             logger.info("")
             logger.info("💡 Using settings from config.yaml (if available)")
             logger.info("For videos with geo-restrictions, use: --cookies tiktok_cookies.txt")
             logger.info("For cookie instructions: --help-cookies")
+            logger.info("For technical error details: --debug")
             logger.info("")
             url = input("Enter TikTok video URL: ").strip()
             if url:
                 quality = args.quality if args.quality is not None else get_config('download.quality', 'best')
                 with_audio = not args.no_audio if args.no_audio else get_config('download.with_audio', True)
-                downloader.download(url, quality, with_audio)
+                result = downloader.download(url, quality, with_audio, max_retries=args.max_retries)
+                
+                if not result:
+                    return 1
             else:
                 parser.print_help()
 
