@@ -325,6 +325,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## 📝 Changelog
 
+
+### v2.4
+- 🎯 User-friendly error handling with clear solutions
+- 📋 ConfigManager for YAML-based configuration
+- 🔔 Desktop notifications for new downloads
+- 📊 Professional logging system with daily rotation
+- 🔄 Smart retry logic based on error type
+- ✅ Integration tests for TikTok API
+- 🧪 Comprehensive unit tests
 ### v2.0
 - ✨ Added timestamp-based filtering (no more duplicates)
 - 🎯 Limited check to last 5 videos per user
