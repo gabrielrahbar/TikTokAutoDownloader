@@ -79,17 +79,29 @@ class TestErrorClassification(unittest.TestCase):
 class TestRetryLogic(unittest.TestCase):
     """Tests for retry decision logic"""
 
-    def test_retryable_errors(self):
-        """Network and rate limit errors should be retryable"""
-        for error_type in [ErrorType.NETWORK, ErrorType. RATE_LIMIT, ErrorType. UNKNOWN]:
-            error = UserFriendlyError(error_type=error_type, message="Test")
-            self.assertTrue(ErrorHandler.is_retryable(error))
+    class TestRetryLogic(unittest.TestCase):
+        """Tests for retry decision logic"""
 
-    def test_non_retryable_errors(self):
-        """Deleted and private videos should NOT be retryable"""
-        for error_type in [ErrorType.DELETED_VIDEO, ErrorType. PRIVATE_VIDEO, ErrorType.INVALID_URL]:
-            error = UserFriendlyError(error_type=error_type, message="Test")
-            self.assertFalse(ErrorHandler.is_retryable(error))
+        def test_retryable_errors(self):
+            """Network and rate limit errors should be retryable"""
+            for error_type in [ErrorType.NETWORK, ErrorType.RATE_LIMIT]:
+                error = UserFriendlyError(error_type=error_type, message="Test")
+                self.assertTrue(ErrorHandler.is_retryable(error))
+
+        def test_non_retryable_errors(self):
+            """Deleted, private, geo-blocked, and cookie errors should NOT be retryable"""
+            non_retryable = [
+                ErrorType.DELETED_VIDEO,
+                ErrorType.PRIVATE_VIDEO,
+                ErrorType.INVALID_URL,
+                ErrorType.GEO_RESTRICTION, 
+                ErrorType.COOKIES_NEEDED,
+                ErrorType.PERMISSION,
+                ErrorType.UNKNOWN
+            ]
+            for error_type in non_retryable:
+                error = UserFriendlyError(error_type=error_type, message="Test")
+                self.assertFalse(ErrorHandler.is_retryable(error))
 
     def test_wait_times(self):
         """Test wait times are reasonable"""
