@@ -168,9 +168,13 @@ class ErrorHandler:
                 ],
                 technical_details=str(exception)
             )
-        
+
         # Cookies needed (generic authentication issue)
-        if any(keyword in error_msg for keyword in ['sign in', 'login', 'authentication', 'unauthorized']):
+        if any(keyword in error_msg for keyword in [
+            'sign in', 'login', 'authentication', 'unauthorized',
+            'requiring login', 'cookies', 'unable to extract',
+            'user id', 'channel_id', '--cookies'
+        ]):
             return UserFriendlyError(
                 ErrorType.COOKIES_NEEDED,
                 "Authentication required",
@@ -250,41 +254,47 @@ class ErrorHandler:
         ErrorHandler.display_error(user_error, show_technical=show_technical)
         
         return user_error
-    
+
     @staticmethod
     def is_retryable(error):
         """
         Check if error is retryable
-        
+
         Args:
             error: UserFriendlyError object
-            
+
         Returns:
             bool: True if should retry, False otherwise
         """
-        # Retryable errors
+        # Retryable errors (temporary issues only)
         retryable_types = [
             ErrorType.NETWORK,
-            ErrorType.RATE_LIMIT,
-            ErrorType.UNKNOWN
+            ErrorType.RATE_LIMIT
+            # ← UNKNOWN REMOVED - don't retry unknown errors!
         ]
-        
-        # Non-retryable errors
+
+        # Non-retryable errors (require user action)
         non_retryable_types = [
             ErrorType.DELETED_VIDEO,
             ErrorType.PRIVATE_VIDEO,
             ErrorType.INVALID_URL,
-            ErrorType.DISK_SPACE
+            ErrorType.DISK_SPACE,
+            ErrorType.GEO_RESTRICTION,
+            ErrorType.COOKIES_NEEDED,
+            ErrorType.PERMISSION,
+            ErrorType.UNKNOWN
         ]
-        
+
         if error.error_type in non_retryable_types:
             return False
-        
+
         if error.error_type in retryable_types:
             return True
-        
-        # For other errors, be conservative and retry
-        return True
+
+        # Default: don't retry
+        return False
+
+
     
     @staticmethod
     def get_wait_time(error):

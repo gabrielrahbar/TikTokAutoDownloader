@@ -2,7 +2,7 @@
 """
 TikTok Monitor - Automatically monitor and download new TikTok videos
 Tracks last seen video and downloads only truly new ones using timestamps
-Version: 2.4 - Added user-friendly error handling
+Version: 2.5 - Auto-stop when all users fail with non-retryable errors
 """
 
 import yt_dlp
@@ -13,11 +13,15 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import random
 import argparse
+import os
+import sys
+import subprocess
 from logger_manager import logger
 from retry_utils import retry_on_network_error, retry_on_api_error, RetryContext, wait_with_jitter
 from notification_manager import notifier, notify_video
 from config_manager import get_config
 from error_handler import ErrorHandler, handle_error, is_retryable_error, get_retry_wait_time
+from daemon_manager import daemon
 
 
 class TikTokMonitor:
@@ -74,7 +78,6 @@ class TikTokMonitor:
                 enabled INTEGER DEFAULT 1
             )
         ''')
-
         # Settings table (for notifications and other preferences)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS settings (
@@ -155,9 +158,10 @@ class TikTokMonitor:
 
         try:
             cursor.execute('''
-                INSERT OR IGNORE INTO monitored_users (username, last_check, last_video_timestamp)
+                           INSERT
+                           OR IGNORE INTO monitored_users (username, last_check, last_video_timestamp)
                 VALUES (?, ?, ?)
-            ''', (username, datetime.now().isoformat(), 0))
+                           ''', (username, datetime.now().isoformat(), 0))
             conn.commit()
             logger.user_added(username)
             return True
@@ -288,10 +292,11 @@ class TikTokMonitor:
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
         cursor.execute('''
-            UPDATE monitored_users 
-            SET last_video_timestamp = ?, last_check = ?
-            WHERE username = ?
-        ''', (timestamp, datetime.now().isoformat(), username))
+                       UPDATE monitored_users
+                       SET last_video_timestamp = ?,
+                           last_check           = ?
+                       WHERE username = ?
+                       ''', (timestamp, datetime.now().isoformat(), username))
         conn.commit()
         conn.close()
 
@@ -335,6 +340,9 @@ class TikTokMonitor:
     def get_user_videos(self, username, max_videos=None):
         """
         Get latest videos from a user profile with user-friendly error handling
+
+        Returns:
+            tuple: (videos_list, error_object or None)
         """
         if max_videos is None:
             max_videos = get_config('monitor.max_videos_per_check', 5)
@@ -356,6 +364,8 @@ class TikTokMonitor:
         }
 
         max_retries = 3
+        last_error = None
+
         for attempt in range(1, max_retries + 1):
             try:
                 logger.debug(f"Fetching videos for @{username} (attempt {attempt}/{max_retries})")
@@ -376,25 +386,31 @@ class TikTokMonitor:
                                 })
                         videos.sort(key=lambda x: x['timestamp'], reverse=True)
                         logger.debug(f"Found {len(videos)} videos for @{username}")
-                        return videos
-                    return []
+                        return videos, None
+                    return [], None
 
             except Exception as e:
                 user_error = handle_error(e, url, username, show_technical=(attempt == max_retries))
-                
+                last_error = user_error
+
                 if attempt < max_retries and is_retryable_error(user_error):
                     wait_time = get_retry_wait_time(user_error)
                     logger.warning(f"⏳ Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.error(f"Failed to fetch videos for @{username} after {max_retries} attempts")
-                    return []
-        
-        return []
+                    logger.error(f"Failed to fetch videos for @{username}")
+                    return [], last_error
+
+        return [], last_error
 
     def download_video(self, url, username=None):
-        """Download a single video with user-friendly error handling"""
+        """
+        Download a single video with user-friendly error handling
+
+        Returns:
+            tuple: (info, filepath, error_object or None)
+        """
         ydl_opts = {
             'format': get_config('download.quality', 'best'),
             'outtmpl': str(self.output_dir / '%(uploader)s_%(upload_date)s_%(title)s.%(ext)s'),
@@ -410,6 +426,8 @@ class TikTokMonitor:
         }
 
         max_retries = 3
+        last_error = None
+
         for attempt in range(1, max_retries + 1):
             try:
                 if attempt > 1:
@@ -418,11 +436,12 @@ class TikTokMonitor:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     filename = ydl.prepare_filename(info)
-                    return info, filename
+                    return info, filename, None
 
             except Exception as e:
                 user_error = handle_error(e, url, username, show_technical=(attempt == max_retries))
-                
+                last_error = user_error
+
                 if attempt < max_retries and is_retryable_error(user_error):
                     wait_time = get_retry_wait_time(user_error)
                     logger.warning(f"⏳ Waiting {wait_time} seconds before retry...")
@@ -431,13 +450,16 @@ class TikTokMonitor:
                 else:
                     if not is_retryable_error(user_error):
                         logger.error("❌ This error cannot be automatically resolved - skipping video")
-                    return None, None
-        
-        return None, None
+                    return None, None, last_error
+
+        return None, None, last_error
 
     def monitor_user(self, username, download_new=True):
         """
         Monitor a user and download new videos with user-friendly error handling
+
+        Returns:
+            tuple: (downloaded_count, error_object or None)
         """
         logger.info("")
         logger.info("=" * 60)
@@ -462,23 +484,37 @@ class TikTokMonitor:
 
             # Get latest videos
             logger.debug("Fetching video metadata...")
-            videos = self.get_user_videos(username)
+            videos, fetch_error = self.get_user_videos(username)
+
+            if fetch_error:
+                # Update last_check even on error
+                conn = sqlite3.connect(self.db_file)
+                cursor = conn.cursor()
+                cursor.execute('''
+                               UPDATE monitored_users
+                               SET last_check = ?
+                               WHERE username = ?
+                               ''', (datetime.now().isoformat(), username))
+                conn.commit()
+                conn.close()
+
+                return 0, fetch_error
 
             if not videos:
                 logger.warning(f"No videos found for @{username}")
-                
+
                 # Update last_check
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
                 cursor.execute('''
-                    UPDATE monitored_users 
-                    SET last_check = ?
-                    WHERE username = ?
-                ''', (datetime.now().isoformat(), username))
+                               UPDATE monitored_users
+                               SET last_check = ?
+                               WHERE username = ?
+                               ''', (datetime.now().isoformat(), username))
                 conn.commit()
                 conn.close()
-                
-                return 0
+
+                return 0, None
 
             logger.info(f"📊 Found {len(videos)} recent videos")
 
@@ -486,7 +522,7 @@ class TikTokMonitor:
             new_videos = []
             for video in videos:
                 video_timestamp = video.get('timestamp', 0)
-                
+
                 if video_timestamp > last_timestamp or not self.is_video_downloaded(video['id']):
                     if video_timestamp > 0 and video_timestamp <= last_timestamp:
                         continue
@@ -494,19 +530,19 @@ class TikTokMonitor:
 
             if not new_videos:
                 logger.info(f"✅ No new videos for @{username}")
-                
+
                 # Update last_check
                 conn = sqlite3.connect(self.db_file)
                 cursor = conn.cursor()
                 cursor.execute('''
-                    UPDATE monitored_users 
-                    SET last_check = ?
-                    WHERE username = ?
-                ''', (datetime.now().isoformat(), username))
+                               UPDATE monitored_users
+                               SET last_check = ?
+                               WHERE username = ?
+                               ''', (datetime.now().isoformat(), username))
                 conn.commit()
                 conn.close()
-                
-                return 0
+
+                return 0, None
 
             logger.new_videos_found(len(new_videos), username)
 
@@ -518,6 +554,7 @@ class TikTokMonitor:
 
             downloaded = 0
             newest_timestamp = last_timestamp
+            download_error = None
 
             # Download new videos
             for i, video in enumerate(new_videos, 1):
@@ -531,7 +568,12 @@ class TikTokMonitor:
                         logger.debug(f"Anti-bot delay: {delay:.1f}s")
                         time.sleep(delay)
 
-                    info, filepath = self.download_video(video['url'], username)
+                    info, filepath, error = self.download_video(video['url'], username)
+
+                    if error:
+                        download_error = error
+                        logger.warning(f"⚠️  Skipping video due to error")
+                        continue
 
                     if info and filepath:
                         self.save_video_metadata(info, filepath)
@@ -560,22 +602,23 @@ class TikTokMonitor:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
             cursor.execute('''
-                UPDATE monitored_users 
-                SET total_videos = total_videos + ?, last_check = ?
-                WHERE username = ?
-            ''', (downloaded, datetime.now().isoformat(), username))
+                           UPDATE monitored_users
+                           SET total_videos = total_videos + ?,
+                               last_check   = ?
+                           WHERE username = ?
+                           ''', (downloaded, datetime.now().isoformat(), username))
             conn.commit()
             conn.close()
 
             logger.info(f"\n✅ Monitoring complete: {downloaded}/{len(new_videos)} videos downloaded successfully")
-            return downloaded
+            return downloaded, download_error
 
         except Exception as e:
             logger.error(f"Error monitoring @{username}: {e}", exc_info=True)
-            return 0
+            return 0, None
 
     def start_monitoring(self, interval_minutes=None, max_iterations=None):
-        """Start continuous monitoring loop with user-friendly error handling"""
+        """Start continuous monitoring loop with auto-stop on persistent failures"""
         if interval_minutes is None:
             interval_minutes = get_config('monitor.interval_minutes', 30)
 
@@ -589,8 +632,8 @@ class TikTokMonitor:
         logger.monitoring_start(users, interval_minutes)
 
         iteration = 0
-        consecutive_errors = 0
-        max_consecutive_errors = 5
+        consecutive_all_failed = 0  # Track consecutive iterations where ALL users failed
+        max_consecutive_all_failed = 1 # Stop after 1 consecutive complete failures
 
         try:
             while True:
@@ -601,13 +644,21 @@ class TikTokMonitor:
                 logger.info("#" * 60)
 
                 total_downloaded = 0
+                failed_users = []
+                non_retryable_errors = []
 
                 for username in users:
                     try:
                         logger.monitoring_check(iteration, username)
-                        downloaded = self.monitor_user(username, download_new=True)
+                        downloaded, error = self.monitor_user(username, download_new=True)
                         total_downloaded += downloaded
-                        consecutive_errors = 0  # Reset on success
+
+                        # Check if user failed with error (any kind)
+                        if error:
+                            failed_users.append(username)
+                            # Track specifically non-retryable errors for reporting
+                            if not is_retryable_error(error):
+                                non_retryable_errors.append((username, error))
 
                         # Anti-bot delay between users
                         if len(users) > 1:
@@ -618,16 +669,67 @@ class TikTokMonitor:
 
                     except Exception as e:
                         logger.error(f"Failed to monitor @{username}: {e}")
-                        consecutive_errors += 1
+                        failed_users.append(username)
 
-                        if consecutive_errors >= max_consecutive_errors:
-                            logger.critical(f"Too many consecutive errors ({consecutive_errors}). Stopping.")
-                            raise
+                # Check if ALL users failed with non-retryable errors
+                if len(failed_users) == len(users) and len(users) > 0:
+                    consecutive_all_failed += 1
+
+                    logger.warning("")
+                    logger.warning("=" * 60)
+                    logger.warning(f"⚠️  ALL {len(users)} users failed this iteration")
+                    logger.warning(f"Consecutive failures: {consecutive_all_failed}/{max_consecutive_all_failed}")
+                    logger.warning("=" * 60)
+
+                    # Show error summary
+                    if non_retryable_errors:
+                        logger.warning("\n📋 Error Summary:")
+                        for user, err in non_retryable_errors:
+                            logger.warning(f"   @{user}: {err.error_type}")
+
+                    # Send notification on first failure
+                    if consecutive_all_failed == 1:
+                        notifier.send(
+                            title="⚠️ All Users Failed",
+                            message=f"All {len(users)} users failed (cookies/geo-block?)\nCheck logs or fix issues",
+                            timeout=0
+                        )
+
+                    # Stop monitoring after consecutive failures
+                    if consecutive_all_failed >= max_consecutive_all_failed:
+                        logger.critical("")
+                        logger.critical("=" * 60)
+                        logger.critical("🛑 STOPPING MONITOR")
+                        logger.critical(f"All users failed for {consecutive_all_failed} consecutive iterations")
+                        logger.critical("=" * 60)
+                        logger.critical("")
+                        logger.critical("💡 Common solutions:")
+                        logger.critical("   1. Connect to a VPN (USA/Canada/Germany)")
+                        logger.critical("   2. Export cookies from TikTok")
+                        logger.critical("      Run: python tiktok_downloader_advanced.py --help-cookies")
+                        logger.critical("   3. Check if usernames are correct")
+                        logger.critical("   4. Wait a few hours and try again")
+                        logger.critical("")
+
+                        # Send critical notification
+                        notifier.send(
+                            title="🛑 Monitor STOPPED",
+                            message=f"All users failed {consecutive_all_failed} times\nUse VPN or export cookies",
+                            timeout=0
+                        )
+
+                        # Exit immediately - don't raise, just return
+                        return
+                else:
+                    # Reset counter if at least one user succeeded
+                    consecutive_all_failed = 0
 
                 print("")
                 print("=" * 60)
                 print(f"✅ Iteration #{iteration} completed")
                 print(f"📥 New videos downloaded: {total_downloaded}")
+                if failed_users:
+                    print(f"⚠️  Failed users: {len(failed_users)}/{len(users)}")
                 print("=" * 60)
 
                 if max_iterations and iteration >= max_iterations:
@@ -657,12 +759,12 @@ class TikTokMonitor:
         total_users = cursor.fetchone()[0]
 
         cursor.execute('''
-            SELECT author, COUNT(*) as count 
-            FROM videos 
-            GROUP BY author 
-            ORDER BY count DESC 
-            LIMIT 5
-        ''')
+                       SELECT author, COUNT(*) as count
+                       FROM videos
+                       GROUP BY author
+                       ORDER BY count DESC
+                           LIMIT 5
+                       ''')
         top_authors = cursor.fetchall()
 
         conn.close()
@@ -680,25 +782,34 @@ class TikTokMonitor:
 
 
 def interactive_menu(monitor):
-    """Interactive menu with user management and notifications"""
+    """Interactive menu with user management, notifications and daemon control"""
     while True:
-        print("\n ╔═══════════════════════════════════════════════════════════╗")
-        print(" ║              TikTok Monitor - Main Menu v2.4              ║")
-        print(" ║          (User-Friendly Error Handling)                   ║")
-        print(" ╚═══════════════════════════════════════════════════════════╝")
+        # Check daemon status
+        daemon_status = daemon.get_status()
+        daemon_indicator = "🟢 Running" if daemon_status['running'] else "🔴 Stopped"
+
+        print("\n ╔════════════════════════════════════════════════════════╗")
+        print(" ║           TikTok Monitor - Main Menu                   ║")
+        print(f" ║         Background: {daemon_indicator:<35}║")
+        print(" ║                                                        ║")
+        print(" ╚════════════════════════════════════════════════════════╝")
         print("\n👥 USER MANAGEMENT")
-        print("  1. ➕ Add user to monitor")
-        print("  2. 📋 List monitored users")
-        print("  3. ❌ Remove user from monitoring")
+        print("  1.  ➕ Add user to monitor")
+        print("  2. 📋  List monitored users")
+        print("  3.  ❌ Remove user from monitoring")
         print("  4. 🗑️  Delete user permanently")
         print("  5. ♻️  Re-enable disabled user")
         print("\n🔍 MONITORING")
-        print("  6. 🔍 Check for new videos (once)")
-        print("  7. 🤖 Start automatic monitoring")
+        print("  6. 🔎  Check for new videos (once)")
+        print("  7. 🤖  Start automatic monitoring (foreground)")
+        print("\n🔧 BACKGROUND CONTROL")
+        print("  8.  🚀  Start background")
+        print("  9.  ⏹️  Stop background")
+        print("  10. 📊  Background status")
         print("\n📊 STATISTICS & SETTINGS")
-        print("  8. 📊 Show statistics")
-        print(f"  9. 🔔 Toggle notifications (currently: {notifier.get_status_text()})")
-        print("\n  0. 🚪 Exit")
+        print("  11. 📊  Show statistics")
+        print(f"  12. 🔔  Toggle notifications (currently: {notifier.get_status_text()})")
+        print("\n  0. 🚪  Exit")
         print()
 
         choice = input("Choice: ").strip()
@@ -714,14 +825,17 @@ def interactive_menu(monitor):
 
             if users:
                 print(f"\n{'=' * 100}")
-                print(f"{'Username':<20} {'Status':<12} {'Last Check':<20} {'Last Timestamp':<20} {'Total':<8} {'In DB':<8}")
+                print(
+                    f"{'Username':<20} {'Status':<12} {'Last Check':<20} {'Last Timestamp':<20} {'Total':<8} {'In DB':<8}")
                 print(f"{'=' * 100}")
 
                 for username, last_check, total, enabled, last_ts, db_videos in users:
                     status = "🟢 Active" if enabled else "🔴 Disabled"
-                    last_check_str = datetime.fromisoformat(last_check).strftime('%d/%m/%Y %H:%M') if last_check else 'Never'
+                    last_check_str = datetime.fromisoformat(last_check).strftime(
+                        '%d/%m/%Y %H:%M') if last_check else 'Never'
                     last_ts_str = datetime.fromtimestamp(last_ts).strftime('%d/%m/%Y %H:%M') if last_ts > 0 else 'None'
-                    print(f"@{username:<19} {status:<12} {last_check_str:<20} {last_ts_str:<20} {total:<8} {db_videos:<8}")
+                    print(
+                        f"@{username:<19} {status:<12} {last_check_str:<20} {last_ts_str:<20} {total:<8} {db_videos:<8}")
 
                 print(f"{'=' * 100}")
                 print(f"Total: {len(users)} users")
@@ -757,9 +871,61 @@ def interactive_menu(monitor):
             monitor.start_monitoring(interval_minutes=interval)
 
         elif choice == '8':
-            monitor.get_stats()
+            # Start daemon
+            if daemon.is_running():
+                print("\n⚠️  Daemon is already running!")
+                print("   Stop it first with option 9")
+            else:
+                interval = input("\nMinutes between checks [30]: ").strip()
+                interval = int(interval) if interval.isdigit() else get_config('monitor.interval_minutes', 30)
+
+                print("\n🚀 Starting daemon...")
+                print("   The monitoring will continue in background")
+                print("   You can close this terminal safely")
+
+                # Use subprocess to start daemon
+                cmd = [sys.executable, 'tiktok_monitor.py', '--daemon', '--interval', str(interval)]
+
+                try:
+                    subprocess.Popen(cmd,
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL,
+                                     stdin=subprocess.DEVNULL)
+                    time.sleep(2)  # Give it time to start
+
+                    if daemon.is_running():
+                        status = daemon.get_status()
+                        print(f"\n✅ Daemon started successfully!")
+                        print(f"   PID: {status['pid']}")
+                    else:
+                        print("\n❌ Failed to start daemon")
+                except Exception as e:
+                    print(f"\n❌ Error starting daemon: {e}")
 
         elif choice == '9':
+            # Stop daemon
+            daemon.stop_daemon()
+
+        elif choice == '10':
+            # Daemon status
+            status = daemon.get_status()
+            print("\n" + "=" * 60)
+            print("DAEMON STATUS")
+            print("=" * 60)
+            print(status['message'])
+
+            if status['running']:
+                print(f"\n📋 Process Information:")
+                print(f"   PID: {status['pid']}")
+                print(f"   Started: {status['started']}")
+                print(f"   CPU Usage: {status['cpu']:.1f}%")
+                print(f"   Memory: {status['memory']:.1f} MB")
+            print("=" * 60)
+
+        elif choice == '11':
+            monitor.get_stats()
+
+        elif choice == '12':
             monitor.toggle_notifications()
 
         elif choice == '0':
@@ -771,9 +937,9 @@ def interactive_menu(monitor):
 
 
 def main():
-    """Main function with interactive menu"""
+    """Main function with interactive menu and daemon support"""
     parser = argparse.ArgumentParser(
-        description='TikTok Monitor v2.4 - With user-friendly error handling',
+        description='TikTok Monitor v2.5 - Auto-stop on persistent errors',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -783,8 +949,14 @@ Examples:
   # Start automatic monitoring
   %(prog)s --auto --users charlidamelio khaby.lame
 
-  # Override config interval
-  %(prog)s --auto --interval 45 --users charlidamelio
+  # Start as daemon (background)
+  %(prog)s --daemon --interval 45
+
+  # Stop daemon
+  %(prog)s --stop-daemon
+
+  # Daemon status
+  %(prog)s --daemon-status
 
   # Check once only
   %(prog)s --check-once --users charlidamelio
@@ -792,16 +964,22 @@ Examples:
   # Show statistics
   %(prog)s --stats
 
-New in v2.4:
-  - User-friendly error messages with solutions
-  - Better error categorization (geo-restriction, rate limit, etc.)
-  - Smart retry logic based on error type
-  - Clear action items for each error
+New in v2.5:
+  - Auto-stop when all users fail with non-retryable errors
+  - No more wasted retries on cookies/geo-block errors
+  - Desktop notifications on critical failures
+  - Better error tracking and reporting
         """
     )
 
     parser.add_argument('--auto', action='store_true',
                         help='Start continuous automatic monitoring')
+    parser.add_argument('--daemon', action='store_true',
+                        help='Start as background daemon')
+    parser.add_argument('--stop-daemon', action='store_true',
+                        help='Stop running daemon')
+    parser.add_argument('--daemon-status', action='store_true',
+                        help='Show daemon status')
     parser.add_argument('--interval', type=int, default=None,
                         help='Minutes between checks (overrides config)')
     parser.add_argument('--users', nargs='+',
@@ -815,6 +993,27 @@ New in v2.4:
 
     args = parser.parse_args()
 
+    # Handle daemon commands FIRST (before creating monitor)
+    if args.stop_daemon:
+        daemon.stop_daemon()
+        return
+
+    if args.daemon_status:
+        status = daemon.get_status()
+        print("\n" + "=" * 60)
+        print("DAEMON STATUS")
+        print("=" * 60)
+        print(status['message'])
+
+        if status['running']:
+            print(f"\n📋 Process Information:")
+            print(f"   PID: {status['pid']}")
+            print(f"   Started: {status['started']}")
+            print(f"   CPU Usage: {status['cpu']:.1f}%")
+            print(f"   Memory: {status['memory']:.1f} MB")
+        print("=" * 60)
+        return
+
     output_dir = args.output if args.output is not None else get_config('monitor.output_dir', './tiktok_downloads')
     monitor = TikTokMonitor(output_dir=output_dir)
 
@@ -825,6 +1024,30 @@ New in v2.4:
     if args.users:
         for username in args.users:
             monitor.add_user_to_monitor(username.lstrip('@'))
+
+    # Handle daemon start
+    if args.daemon:
+        if daemon.is_running():
+            print("\n⚠️  Daemon is already running!")
+            print("   Stop it first with: python tiktok_monitor.py --stop-daemon")
+            return
+
+        # Build arguments for daemon subprocess
+        daemon_args = ['--auto']
+        if args.interval:
+            daemon_args.extend(['--interval', str(args.interval)])
+        if args.output:
+            daemon_args.extend(['--output', args.output])
+
+        # Start daemon
+        result = daemon.start_daemon(daemon_args)
+
+        # On Unix, if we're the child process, we continue with monitoring
+        if result is None and os.name != 'nt':
+            # We ARE the daemon child process
+            monitor.start_monitoring(interval_minutes=args.interval)
+
+        return
 
     if args.auto:
         monitor.start_monitoring(interval_minutes=args.interval)
