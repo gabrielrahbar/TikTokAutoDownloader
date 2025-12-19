@@ -3,7 +3,6 @@
 TikTok Auto Downloader - Modern GUI Interface
 Built with PySide6 (Qt6) for professional desktop experience
 Integrates seamlessly with existing TikTokMonitor backend
-Version: 2.2 - Fixed dark backgrounds with forced palette
 """
 
 import sys
@@ -17,7 +16,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QPushButton, QLabel,
     QLineEdit, QSpinBox, QCheckBox, QTextEdit, QFileDialog,
     QMessageBox, QHeaderView, QSystemTrayIcon, QMenu, QFrame,
-    QGroupBox, QGridLayout, QComboBox
+    QGroupBox, QGridLayout, QComboBox, QSizePolicy, QScrollArea
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, QUrl
 from PySide6.QtGui import QIcon, QAction, QFont, QColor, QDesktopServices, QPalette
@@ -50,7 +49,7 @@ class MonitorThread(QThread):
         
     def run(self):
         """Execute monitoring in background thread"""
-        try:
+        try: 
             if self.username:
                 # Monitor single user
                 self.log_signal.emit(f"🔍 Checking @{self.username}...")
@@ -66,8 +65,8 @@ class MonitorThread(QThread):
                 for user in users:
                     if not self.is_running:
                         break
-                    downloaded, error = self. monitor.monitor_user(user)
-                    self.log_signal.emit(f"@{user}:  {downloaded} videos downloaded")
+                    downloaded, error = self.monitor.monitor_user(user)
+                    self.log_signal.emit(f"@{user}: {downloaded} videos downloaded")
         except Exception as e:
             self.log_signal.emit(f"❌ Error: {str(e)}")
         finally:
@@ -122,10 +121,10 @@ class DashboardTab(QWidget):
         self.start_daemon_btn = QPushButton("🚀 Start Background Monitor")
         self.start_daemon_btn.clicked.connect(self.start_daemon)
         self.start_daemon_btn.setMinimumHeight(45)
-        self.start_daemon_btn.setStyleSheet(f"background-color: {COLORS['success']}; color: white; font-weight: bold;")
+        self.start_daemon_btn.setStyleSheet(f"background-color:  {COLORS['success']}; color: white; font-weight: bold;")
         
         self.stop_daemon_btn = QPushButton("⏹️ Stop Background Monitor")
-        self.stop_daemon_btn. clicked.connect(self.stop_daemon)
+        self.stop_daemon_btn.clicked. connect(self.stop_daemon)
         self.stop_daemon_btn.setEnabled(False)
         self.stop_daemon_btn.setMinimumHeight(45)
         self.stop_daemon_btn.setStyleSheet(f"background-color: {COLORS['danger']}; color: white; font-weight: bold;")
@@ -133,11 +132,11 @@ class DashboardTab(QWidget):
         self.refresh_btn = QPushButton("🔄 Refresh")
         self.refresh_btn.clicked.connect(self.refresh_metrics)
         self.refresh_btn.setMinimumHeight(45)
-        self.refresh_btn.setStyleSheet(f"background-color: {COLORS['light']}; color: black; font-weight: bold;")
+        self.refresh_btn.setStyleSheet(f"background-color:  {COLORS['light']}; color: black; font-weight: bold;")
         
-        daemon_layout. addWidget(self.start_daemon_btn, 2)
+        daemon_layout.addWidget(self.start_daemon_btn, 2)
         daemon_layout.addWidget(self.stop_daemon_btn, 2)
-        daemon_layout.addWidget(self. refresh_btn, 1)
+        daemon_layout.addWidget(self.refresh_btn, 1)
         
         daemon_group.setLayout(daemon_layout)
         layout.addWidget(daemon_group)
@@ -153,7 +152,7 @@ class DashboardTab(QWidget):
         
         self.open_folder_btn = QPushButton("📁 Open Downloads")
         self.open_folder_btn.clicked.connect(self. open_downloads_folder)
-        self.open_folder_btn.setMinimumHeight(45)
+        self.open_folder_btn. setMinimumHeight(45)
         self.open_folder_btn.setStyleSheet(f"background-color: {COLORS['light']}; color: black; font-weight: bold;")
         
         actions_layout.addWidget(self.check_now_btn, 2)
@@ -228,9 +227,9 @@ class DashboardTab(QWidget):
         
         try:
             import subprocess
-            interval = get_config('monitor. interval_minutes', 30)
+            interval = get_config('monitor.interval_minutes', 30)
             cmd = [sys.executable, 'tiktok_monitor.py', '--daemon', '--interval', str(interval)]
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess. DEVNULL, stdin=subprocess.DEVNULL)
             
             QTimer.singleShot(2000, self.refresh_metrics)
             self.log_message(f"✅ Background monitor started (interval: {interval} min)")
@@ -256,7 +255,7 @@ class DashboardTab(QWidget):
         self.log_message("🔍 Starting check for all users...")
         self.check_now_btn.setEnabled(False)
         
-        self.thread = MonitorThread(self.monitor)
+        self.thread = MonitorThread(self. monitor)
         self.thread.log_signal.connect(self.log_message)
         self.thread. status_signal.connect(lambda: self.check_now_btn.setEnabled(True))
         self.thread. finished.connect(lambda: self.parent_window.users_tab.refresh_users())
@@ -358,7 +357,7 @@ class UsersTab(QWidget):
         self.show_disabled_cb = QCheckBox("Show Disabled Users")
         self.show_disabled_cb.stateChanged.connect(self.refresh_users)
         
-        controls_layout.addWidget(self. refresh_btn)
+        controls_layout.addWidget(self.refresh_btn)
         controls_layout.addWidget(self.show_disabled_cb)
         controls_layout.addStretch()
         
@@ -394,7 +393,7 @@ class UsersTab(QWidget):
             self.users_table.setItem(row, 3, QTableWidgetItem(str(total)))
             
             # In database
-            self.users_table.setItem(row, 4, QTableWidgetItem(str(db_videos)))
+            self.users_table. setItem(row, 4, QTableWidgetItem(str(db_videos)))
             
             # Action buttons
             actions_widget = QWidget()
@@ -418,7 +417,7 @@ class UsersTab(QWidget):
             delete_btn = QPushButton("🗑️")
             delete_btn.setToolTip("Delete permanently")
             delete_btn.setMaximumWidth(40)
-            delete_btn.setStyleSheet(f"background-color:  {COLORS['danger']}; color: white;")
+            delete_btn.setStyleSheet(f"background-color: {COLORS['danger']}; color: white;")
             delete_btn.clicked.connect(lambda checked, u=username: self.delete_user(u))
             actions_layout. addWidget(delete_btn)
             
@@ -455,7 +454,7 @@ class UsersTab(QWidget):
     
     def delete_user(self, username):
         """Permanently delete user"""
-        reply = QMessageBox. warning(self, "Permanent Deletion",
+        reply = QMessageBox.warning(self, "Permanent Deletion",
                                      f"⚠️ Permanently delete @{username} and all associated videos from database?\n\n"
                                      f"Downloaded files will NOT be deleted.\n\nThis cannot be undone! ",
                                      QMessageBox.Yes | QMessageBox.No)
@@ -567,8 +566,8 @@ class DownloadsTab(QWidget):
     def refresh_downloads(self):
         """Reload downloads table with filters applied"""
         try:
-            conn = sqlite3.connect(self.monitor.db_file)
-            cursor = conn. cursor()
+            conn = sqlite3.connect(self. monitor.db_file)
+            cursor = conn.cursor()
             
             # Build query with filters
             query = 'SELECT title, author, upload_date, download_date, views, likes, file_path FROM videos WHERE 1=1'
@@ -633,7 +632,7 @@ class DownloadsTab(QWidget):
     
     def export_to_csv(self):
         """Export downloads to CSV file"""
-        filename, _ = QFileDialog.getSaveFileName(self, "Export to CSV", "tiktok_downloads.csv", "CSV Files (*.csv)")
+        filename, _ = QFileDialog.getSaveFileName(self, "Export to CSV", "tiktok_downloads.csv", "CSV Files (*. csv)")
         if not filename:
             return
         
@@ -659,7 +658,7 @@ class DownloadsTab(QWidget):
 
 class SettingsTab(QWidget):
     """
-    Settings and configuration tab
+    Settings and configuration tab with scroll support
     """
     def __init__(self, monitor, parent=None):
         super().__init__(parent)
@@ -667,7 +666,21 @@ class SettingsTab(QWidget):
         self.init_ui()
         
     def init_ui(self):
-        """Initialize settings tab UI"""
+        """Initialize settings tab UI with scroll area"""
+        # Main layout (no scroll)
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout. setSpacing(0)
+        
+        # Create scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt. ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Content widget inside scroll
+        content_widget = QWidget()
         layout = QVBoxLayout()
         layout.setSpacing(20)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -681,11 +694,13 @@ class SettingsTab(QWidget):
         # === MONITORING SETTINGS ===
         monitor_group = QGroupBox("⚙️ Monitoring Settings")
         monitor_layout = QGridLayout()
-        monitor_layout.setSpacing(15)
+        monitor_layout.setSpacing(20)
+        monitor_layout.setVerticalSpacing(20)
         
-        # Interval label and spinbox
+        # Interval
         interval_label = QLabel("Check Interval:")
-        interval_label.setStyleSheet(f"color: {COLORS['dark']}; font-weight: 600; font-size: 14px;")
+        interval_label. setStyleSheet(f"color: {COLORS['dark']}; font-weight: 600; font-size: 14px;")
+        interval_label.setMinimumWidth(180)
         
         self.interval_spinbox = QSpinBox()
         self.interval_spinbox. setMinimum(5)
@@ -693,21 +708,25 @@ class SettingsTab(QWidget):
         self.interval_spinbox.setValue(get_config('monitor. interval_minutes', 30))
         self.interval_spinbox.setSuffix(" minutes")
         self.interval_spinbox.setMinimumHeight(45)
+        self.interval_spinbox.setMaximumWidth(300)
         
-        # Max videos label and spinbox
+        # Max videos
         max_videos_label = QLabel("Max Videos Per Check:")
         max_videos_label.setStyleSheet(f"color: {COLORS['dark']}; font-weight: 600; font-size: 14px;")
+        max_videos_label.setMinimumWidth(180)
         
         self.max_videos_spinbox = QSpinBox()
         self.max_videos_spinbox.setMinimum(1)
         self.max_videos_spinbox. setMaximum(50)
         self.max_videos_spinbox.setValue(get_config('monitor.max_videos_per_check', 5))
         self.max_videos_spinbox.setMinimumHeight(45)
+        self.max_videos_spinbox.setMaximumWidth(300)
         
-        monitor_layout.addWidget(interval_label, 0, 0)
-        monitor_layout.addWidget(self.interval_spinbox, 0, 1)
-        monitor_layout.addWidget(max_videos_label, 1, 0)
-        monitor_layout.addWidget(self.max_videos_spinbox, 1, 1)
+        monitor_layout.addWidget(interval_label, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        monitor_layout.addWidget(self.interval_spinbox, 0, 1, Qt.AlignLeft)
+        monitor_layout.addWidget(max_videos_label, 1, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        monitor_layout.addWidget(self.max_videos_spinbox, 1, 1, Qt.AlignLeft)
+        monitor_layout.setColumnStretch(2, 1)
         
         monitor_group.setLayout(monitor_layout)
         layout.addWidget(monitor_group)
@@ -717,9 +736,9 @@ class SettingsTab(QWidget):
         download_layout = QGridLayout()
         download_layout.setSpacing(15)
         
-        # Output directory
         output_label = QLabel("Output Directory:")
         output_label.setStyleSheet(f"color: {COLORS['dark']}; font-weight: 600; font-size: 14px;")
+        output_label.setMinimumWidth(180)
         
         self.output_dir_input = QLineEdit()
         self.output_dir_input.setText(str(self.monitor.output_dir))
@@ -729,9 +748,10 @@ class SettingsTab(QWidget):
         self.browse_btn = QPushButton("Browse...")
         self.browse_btn. clicked.connect(self.browse_output_dir)
         self.browse_btn.setMinimumHeight(45)
+        self.browse_btn.setMaximumWidth(120)
         self.browse_btn.setStyleSheet(f"background-color: {COLORS['light']}; color: black; font-weight: bold;")
         
-        download_layout.addWidget(output_label, 0, 0)
+        download_layout.addWidget(output_label, 0, 0, Qt.AlignLeft)
         download_layout.addWidget(self.output_dir_input, 0, 1)
         download_layout.addWidget(self.browse_btn, 0, 2)
         
@@ -745,13 +765,16 @@ class SettingsTab(QWidget):
         
         info_label = QLabel(
             "⚠️ <b>Important:</b> TikTok restricts access in certain countries (Italy 🇮🇹, UK 🇬🇧, Hong Kong 🇭🇰). <br><br>"
-            "🔒 <b>To download videos from restricted regions, you MUST use a VPN</b> connected to an unrestricted country:  <br>"
-            "   • 🇺🇸 USA<br>"
+            "🔒 <b>To download videos from restricted regions, you MUST use a VPN</b> connected to an unrestricted country: <br><br>"
+            "<b>Recommended VPN locations:</b><br>"
+            "   • 🇺🇸 USA (Best compatibility)<br>"
             "   • 🇨🇦 Canada<br>"
             "   • 🇩🇪 Germany<br>"
             "   • 🇫🇷 France<br>"
-            "   • 🇦🇺 Australia<br><br>"
-            "📄 For a complete list, see <a href='#' style='color: #3498db;'>docs/restricted_countries.md</a>"
+            "   • 🇦🇺 Australia<br>"
+            "   • 🇯🇵 Japan<br>"
+            "   • 🇪🇸 Spain<br><br>"
+            "📄 For a complete list of restricted countries, see <a href='#' style='color: #3498db; font-weight: bold;'>docs/restricted_countries.md</a>"
         )
         info_label.setWordWrap(True)
         info_label.setOpenExternalLinks(False)
@@ -760,14 +783,15 @@ class SettingsTab(QWidget):
             QLabel {{
                 background-color: #fff3cd;
                 border: 2px solid #ffc107;
-                border-radius: 8px;
-                padding: 15px;
+                border-radius:  8px;
+                padding: 20px;
                 color: {COLORS['dark']};
                 font-size: 13px;
+                line-height: 1.6;
             }}
         """)
         
-        vpn_layout.addWidget(info_label)
+        vpn_layout. addWidget(info_label)
         vpn_group.setLayout(vpn_layout)
         layout.addWidget(vpn_group)
         
@@ -783,7 +807,8 @@ class SettingsTab(QWidget):
         self.test_notif_btn = QPushButton("Test Notification")
         self.test_notif_btn.clicked.connect(self.test_notification)
         self.test_notif_btn.setMinimumHeight(40)
-        self.test_notif_btn.setStyleSheet(f"background-color: {COLORS['light']}; color:  black; font-weight: bold;")
+        self.test_notif_btn.setMaximumWidth(180)
+        self.test_notif_btn. setStyleSheet(f"background-color: {COLORS['light']}; color: black; font-weight: bold;")
         
         notif_layout.addWidget(self.notifications_cb)
         notif_layout.addWidget(self.test_notif_btn)
@@ -796,11 +821,20 @@ class SettingsTab(QWidget):
         save_btn = QPushButton("💾 Save Settings")
         save_btn.clicked.connect(self.save_settings)
         save_btn.setMinimumHeight(50)
+        save_btn.setMaximumWidth(200)
         save_btn.setStyleSheet(f"background-color: {COLORS['success']}; color: white; font-size: 14px; font-weight: bold;")
-        layout.addWidget(save_btn)
+        layout.addWidget(save_btn, 0, Qt.AlignLeft)
         
-        layout.addStretch()
-        self.setLayout(layout)
+        # Add some bottom padding
+        layout.addSpacing(30)
+        
+        # Set content layout
+        content_widget.setLayout(layout)
+        scroll.setWidget(content_widget)
+        
+        # Add scroll to main layout
+        main_layout. addWidget(scroll)
+        self.setLayout(main_layout)
     
     def open_restricted_countries_doc(self):
         """Open restricted_countries.md file"""
@@ -901,7 +935,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(tabs)
         
         # Status bar
-        self.statusBar().showMessage("Ready | TikTok Auto Downloader v2.2")
+        self.statusBar().showMessage("Ready | TikTok Auto Downloader v2.6")
         self.statusBar().setStyleSheet("padding: 5px;")
     
     def setup_system_tray(self):
@@ -912,7 +946,7 @@ class MainWindow(QMainWindow):
         
         self.tray_icon = QSystemTrayIcon(self)
         
-        # Try to use an icon (fallback to default if not available)
+        # Try to use an icon
         try:
             self.tray_icon.setIcon(QIcon. fromTheme("download"))
         except:
@@ -922,7 +956,7 @@ class MainWindow(QMainWindow):
         tray_menu = QMenu()
         
         show_action = QAction("Show Window", self)
-        show_action.triggered.connect(self.show)
+        show_action.triggered. connect(self.show)
         tray_menu.addAction(show_action)
         
         hide_action = QAction("Hide Window", self)
@@ -939,7 +973,7 @@ class MainWindow(QMainWindow):
         stop_daemon_action.triggered.connect(self.dashboard_tab.stop_daemon)
         tray_menu.addAction(stop_daemon_action)
         
-        tray_menu.addSeparator()
+        tray_menu. addSeparator()
         
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(QApplication.quit)
@@ -961,7 +995,7 @@ class MainWindow(QMainWindow):
                 self.activateWindow()
     
     def closeEvent(self, event):
-        """Handle window close event - minimize to tray instead"""
+        """Handle window close event"""
         if QSystemTrayIcon.isSystemTrayAvailable():
             event.ignore()
             self.hide()
@@ -977,11 +1011,10 @@ class MainWindow(QMainWindow):
 
 def main():
     """Main entry point for GUI application"""
-    # Handle Ctrl+C gracefully in PyCharm
     import signal
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     
-    app = QApplication(sys. argv)
+    app = QApplication(sys.argv)
     app.setApplicationName("TikTok Auto Downloader")
     app.setOrganizationName("TikTokMonitor")
     
@@ -1006,16 +1039,12 @@ def main():
     palette.setColor(QPalette. HighlightedText, QColor(255, 255, 255))
     
     # Disabled text
-    palette.setColor(QPalette. Disabled, QPalette.Text, QColor(150, 150, 150))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(150, 150, 150))
     palette.setColor(QPalette. Disabled, QPalette.WindowText, QColor(150, 150, 150))
     
-    # Apply palette BEFORE setting style
+    # Apply palette
     app.setPalette(palette)
-    
-    # Set style
     app.setStyle("Fusion")
-    
-    # Apply stylesheet AFTER palette
     app.setStyleSheet(MODERN_STYLE)
     
     window = MainWindow()
