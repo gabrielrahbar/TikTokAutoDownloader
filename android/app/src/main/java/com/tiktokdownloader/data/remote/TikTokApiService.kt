@@ -2,51 +2,54 @@ package com.tiktokdownloader.data.remote
 
 import retrofit2.Response
 import retrofit2.http.GET
-import retrofit2.http.Header
+import retrofit2.http.Path
 import retrofit2.http.Query
-import retrofit2.http.Url
 
 /**
- * Retrofit service for accessing TikTok public data.
- * Uses publicly available endpoints only.
+ * Retrofit service matching the FastAPI backend endpoints defined in api_server.py.
+ *
+ * All responses follow the standard envelope:
+ * ```json
+ * { "success": true, "data": { ... }, "error": null }
+ * ```
  */
 interface TikTokApiService {
 
-    @GET("api/user/posts")
+    /** Health check – GET /health */
+    @GET("health")
+    suspend fun healthCheck(): Response<ApiResponse>
+
+    /** Get recent videos for a user – GET /api/user/{username}/videos?count=N */
+    @GET("api/user/{username}/videos")
     suspend fun getUserVideos(
-        @Query("username") username: String,
-        @Query("count") count: Int = 10,
-        @Query("cursor") cursor: String = "0"
-    ): Response<UserVideosResponse>
+        @Path("username") username: String,
+        @Query("count") count: Int = 5
+    ): Response<ApiResponse>
 
-    @GET("api/video/info")
+    /** Get single video info – GET /api/video/{video_id}/info */
+    @GET("api/video/{video_id}/info")
     suspend fun getVideoInfo(
-        @Query("video_id") videoId: String
-    ): Response<VideoInfoResponse>
-
-    /**
-     * Fetches a TikTok page to extract video metadata.
-     * Used as fallback when API endpoints are unavailable.
-     */
-    @GET
-    suspend fun fetchPage(
-        @Url url: String,
-        @Header("User-Agent") userAgent: String =
-            "Mozilla/5.0 (Linux; Android 14; Pixel 8) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/120.0.0.0 Mobile Safari/537.36"
-    ): Response<okhttp3.ResponseBody>
+        @Path("video_id") videoId: String
+    ): Response<ApiResponse>
 }
 
-data class UserVideosResponse(
-    val videos: List<VideoData> = emptyList(),
-    val hasMore: Boolean = false,
-    val cursor: String = "0"
+// ---------------------------------------------------------------------------
+// Standard envelope returned by every backend endpoint
+// ---------------------------------------------------------------------------
+
+/**
+ * Standard API response envelope from the FastAPI backend.
+ * Maps to: `{ "success": bool, "data": { ... }, "error": str|null }`
+ */
+data class ApiResponse(
+    val success: Boolean = false,
+    val data: Map<String, Any?>? = null,
+    val error: String? = null
 )
 
-data class VideoInfoResponse(
-    val video: VideoData? = null
-)
+// ---------------------------------------------------------------------------
+// Domain-level data classes parsed from ApiResponse.data
+// ---------------------------------------------------------------------------
 
 data class VideoData(
     val id: String = "",

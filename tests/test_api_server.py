@@ -1,0 +1,162 @@
+"""
+Tests for the FastAPI backend (api_server.py).
+Verifies endpoints return the standard JSON envelope.
+"""
+
+import unittest
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
+
+from api_server import app
+
+
+class TestHealthEndpoint(unittest.TestCase):
+    """Health-check endpoint should always return success."""
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_health_returns_200(self):
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+
+    def test_health_response_format(self):
+        response = self.client.get("/health")
+        body = response.json()
+        self.assertTrue(body["success"])
+        self.assertIn("status", body["data"])
+        self.assertEqual(body["data"]["status"], "ok")
+        self.assertIsNone(body["error"])
+
+    def test_health_contains_version(self):
+        response = self.client.get("/health")
+        body = response.json()
+        self.assertIn("version", body["data"])
+
+
+class TestUserVideosEndpoint(unittest.TestCase):
+    """GET /api/user/{username}/videos should return video list."""
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    @patch("api_server._get_monitor")
+    def test_user_videos_success(self, mock_get_monitor):
+        """Verify response format when videos are returned."""
+        mock_monitor = MagicMock()
+        mock_monitor.get_user_videos.return_value = (
+            [
+                {"id": "123", "url": "https://tiktok.com/@u/video/123",
+                 "title": "Test", "timestamp": 1700000000, "upload_date": "20231114"}
+            ],
+            None,  # no error
+        )
+        mock_get_monitor.return_value = mock_monitor
+
+        response = self.client.get("/api/user/testuser/videos?count=1")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+        self.assertIsNone(body["error"])
+        self.assertEqual(body["data"]["count"], 1)
+        self.assertEqual(len(body["data"]["videos"]), 1)
+        self.assertEqual(body["data"]["videos"][0]["id"], "123")
+
+    @patch("api_server._get_monitor")
+    def test_user_videos_error_from_monitor(self, mock_get_monitor):
+        """When the monitor returns an error, success should be false."""
+        mock_monitor = MagicMock()
+        mock_monitor.get_user_videos.return_value = ([], "Geo-restricted")
+        mock_get_monitor.return_value = mock_monitor
+
+        response = self.client.get("/api/user/blocked/videos")
+        body = response.json()
+        self.assertFalse(body["success"])
+        self.assertIsNotNone(body["error"])
+
+    @patch("api_server._get_monitor")
+    def test_user_videos_empty(self, mock_get_monitor):
+        """When user has no videos, list should be empty."""
+        mock_monitor = MagicMock()
+        mock_monitor.get_user_videos.return_value = ([], None)
+        mock_get_monitor.return_value = mock_monitor
+
+        response = self.client.get("/api/user/newuser/videos")
+        body = response.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["data"]["count"], 0)
+        self.assertEqual(body["data"]["videos"], [])
+
+    def test_user_videos_count_validation(self):
+        """Count parameter should be validated (1-30)."""
+        # count=0 should return 422
+        response = self.client.get("/api/user/u/videos?count=0")
+        self.assertEqual(response.status_code, 422)
+
+        response = self.client.get("/api/user/u/videos?count=50")
+        self.assertEqual(response.status_code, 422)
+
+
+class TestVideoInfoEndpoint(unittest.TestCase):
+    """GET /api/video/{video_id}/info should return video metadata."""
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_video_info_success(self):
+        """Verify successful video info response."""
+        import sys
+
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "id": "999",
+            "webpage_url": "https://tiktok.com/video/999",
+            "title": "Cool video",
+            "uploader": "creator",
+            "upload_date": "20240101",
+            "timestamp": 1704067200,
+            "like_count": 500,
+            "view_count": 10000,
+            "url": "https://cdn.tiktok.com/video.mp4",
+        }
+
+        mock_yt_dlp = MagicMock()
+        mock_yt_dlp.YoutubeDL.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_yt_dlp.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Temporarily inject mock yt_dlp into sys.modules
+        original = sys.modules.get("yt_dlp")
+        sys.modules["yt_dlp"] = mock_yt_dlp
+        try:
+            response = self.client.get("/api/video/999/info")
+        finally:
+            if original is not None:
+                sys.modules["yt_dlp"] = original
+            else:
+                sys.modules.pop("yt_dlp", None)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+        video = body["data"]["video"]
+        self.assertEqual(video["id"], "999")
+        self.assertEqual(video["title"], "Cool video")
+        self.assertEqual(video["likes"], 500)
+
+
+class TestResponseEnvelope(unittest.TestCase):
+    """All endpoints must return the standard { success, data, error } envelope."""
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_envelope_keys_present(self):
+        response = self.client.get("/health")
+        body = response.json()
+        self.assertIn("success", body)
+        self.assertIn("data", body)
+        self.assertIn("error", body)
+
+
+if __name__ == "__main__":
+    unittest.main()
