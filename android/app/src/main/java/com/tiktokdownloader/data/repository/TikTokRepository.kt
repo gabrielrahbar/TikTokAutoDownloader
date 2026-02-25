@@ -1,13 +1,16 @@
 package com.tiktokdownloader.data.repository
 
+import android.content.Context
 import com.tiktokdownloader.data.local.dao.MonitoredUserDao
 import com.tiktokdownloader.data.local.dao.SettingDao
 import com.tiktokdownloader.data.local.dao.VideoDao
 import com.tiktokdownloader.data.local.entity.MonitoredUserEntity
 import com.tiktokdownloader.data.local.entity.SettingEntity
 import com.tiktokdownloader.data.local.entity.VideoEntity
+import com.tiktokdownloader.data.remote.RetryHelper
 import com.tiktokdownloader.data.remote.TikTokApiService
 import com.tiktokdownloader.data.remote.VideoData
+import com.tiktokdownloader.data.remote.VideoDownloadManager
 import kotlinx.coroutines.flow.Flow
 
 class TikTokRepository(
@@ -72,31 +75,69 @@ class TikTokRepository(
 
     suspend fun deleteAllSettings() = settingDao.deleteAllSettings()
 
-    // ── Remote API ──────────────────────────────────────────
+    // ── Remote API with Retry ───────────────────────────────
 
+    /**
+     * Fetches user videos with automatic retry and error classification.
+     * Mirrors Python's get_user_videos() with retry_on_network_error.
+     */
     suspend fun fetchUserVideos(username: String, count: Int = 10): Result<List<VideoData>> {
-        return try {
+        return RetryHelper.withRetry(config = RetryHelper.DEFAULT_API) {
             val response = apiService.getUserVideos(username, count)
             if (response.isSuccessful) {
-                Result.success(response.body()?.videos ?: emptyList())
+                response.body()?.videos ?: emptyList()
             } else {
-                Result.failure(Exception("API error: ${response.code()} ${response.message()}"))
+                throw Exception("API error: ${response.code()} ${response.message()}")
             }
-        } catch (e: Exception) {
-            Result.failure(e)
         }
     }
 
+    /**
+     * Fetches single video info with retry logic.
+     */
     suspend fun fetchVideoInfo(videoId: String): Result<VideoData> {
-        return try {
+        return RetryHelper.withRetry(config = RetryHelper.DEFAULT_API) {
             val response = apiService.getVideoInfo(videoId)
             if (response.isSuccessful && response.body()?.video != null) {
-                Result.success(response.body()!!.video!!)
+                response.body()!!.video!!
             } else {
-                Result.failure(Exception("Video not found"))
+                throw Exception("Video not found: ${response.code()}")
             }
-        } catch (e: Exception) {
-            Result.failure(e)
+        }
+    }
+
+    /**
+     * Downloads a video file to device storage.
+     * Mirrors Python's download_video() with retry and error handling.
+     *
+     * @return Updated VideoEntity with file path, or null on failure
+     */
+    suspend fun downloadVideoFile(
+        context: Context,
+        video: VideoEntity,
+        onProgress: ((Float) -> Unit)? = null
+    ): VideoEntity? {
+        val downloadManager = VideoDownloadManager(context)
+        val downloadUrl = video.url.ifBlank { return null }
+
+        val result = downloadManager.downloadVideo(
+            downloadUrl = downloadUrl,
+            videoId = video.id,
+            author = video.author,
+            onProgress = onProgress
+        )
+
+        return if (result.success) {
+            val updated = video.copy(
+                filePath = result.filePath,
+                status = "downloaded"
+            )
+            videoDao.insertVideo(updated)
+            updated
+        } else {
+            val failed = video.copy(status = "failed")
+            videoDao.insertVideo(failed)
+            null
         }
     }
 }

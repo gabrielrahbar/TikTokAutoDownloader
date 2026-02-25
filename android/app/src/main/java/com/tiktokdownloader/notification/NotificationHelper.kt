@@ -62,6 +62,46 @@ object NotificationHelper {
             .setOngoing(true)
     }
 
+    /**
+     * Shows an error notification for download failures.
+     */
+    fun showErrorNotification(context: Context, title: String, message: String, notificationId: Int) {
+        if (!hasNotificationPermission(context)) return
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setAutoCancel(true)
+            .build()
+
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
+    }
+
+    /**
+     * Shows a download progress notification.
+     */
+    fun showProgressNotification(
+        context: Context,
+        username: String,
+        progress: Int,
+        notificationId: Int
+    ) {
+        if (!hasNotificationPermission(context)) return
+
+        val notification = NotificationCompat.Builder(context, MONITORING_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(context.getString(R.string.notification_download_progress))
+            .setContentText("Downloading from @$username")
+            .setProgress(100, progress, progress == 0)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
+    }
+
     private fun hasNotificationPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ContextCompat.checkSelfPermission(

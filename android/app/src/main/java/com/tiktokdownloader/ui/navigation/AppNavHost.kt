@@ -1,7 +1,8 @@
 package com.tiktokdownloader.ui.navigation
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -20,31 +21,34 @@ fun AppNavHost(
     usersViewModel: UsersViewModel,
     galleryViewModel: GalleryViewModel,
     settingsViewModel: SettingsViewModel,
-    onDisclaimerAccepted: () -> Unit
+    onDisclaimerAccepted: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    NavHost(navController = navController, startDestination = startDestination) {
-        composable(Screen.Disclaimer.route) {
-            DisclaimerScreen(
-                onAccepted = {
-                    onDisclaimerAccepted()
-                    navController.navigate(Screen.Users.route) {
-                        popUpTo(Screen.Disclaimer.route) { inclusive = true }
-                    }
-                },
-                onDeclined = { /* Close app handled in Activity */ }
-            )
-        }
+    Box(modifier = modifier) {
+        NavHost(navController = navController, startDestination = startDestination) {
+            composable(Screen.Disclaimer.route) {
+                DisclaimerScreen(
+                    onAccepted = {
+                        onDisclaimerAccepted()
+                        navController.navigate(Screen.Users.route) {
+                            popUpTo(Screen.Disclaimer.route) { inclusive = true }
+                        }
+                    },
+                    onDeclined = { /* Close app handled in Activity */ }
+                )
+            }
 
-        composable(Screen.Users.route) {
-            UsersScreen(viewModel = usersViewModel)
-        }
+            composable(Screen.Users.route) {
+                UsersScreen(viewModel = usersViewModel)
+            }
 
-        composable(Screen.Gallery.route) {
-            GalleryScreen(viewModel = galleryViewModel)
-        }
+            composable(Screen.Gallery.route) {
+                GalleryScreen(viewModel = galleryViewModel)
+            }
 
-        composable(Screen.Settings.route) {
-            SettingsScreen(viewModel = settingsViewModel)
+            composable(Screen.Settings.route) {
+                SettingsScreen(viewModel = settingsViewModel)
+            }
         }
     }
 }
