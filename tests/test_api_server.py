@@ -224,6 +224,91 @@ class TestVideoInfoEndpoint(unittest.TestCase):
         self.assertEqual(used_url, "https://www.tiktok.com/video/777")
 
 
+    def test_video_info_with_username_with_at_prefix(self):
+        """Username that already contains '@' should not be double-prefixed."""
+        import sys
+
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "id": "777",
+            "webpage_url": "https://tiktok.com/@cooluser/video/777",
+            "title": "Video with username",
+            "uploader": "cooluser",
+            "upload_date": "20240302",
+            "timestamp": 1709337600,
+            "like_count": 10,
+            "view_count": 100,
+            "url": "",
+        }
+
+        mock_yt_dlp = MagicMock()
+        mock_yt_dlp.YoutubeDL.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_yt_dlp.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        original = sys.modules.get("yt_dlp")
+        sys.modules["yt_dlp"] = mock_yt_dlp
+        try:
+            response = self.client.get("/api/video/777/info?username=@cooluser")
+        finally:
+            if original is not None:
+                sys.modules["yt_dlp"] = original
+            else:
+                sys.modules.pop("yt_dlp", None)
+
+        self.assertEqual(response.status_code, 200)
+
+        # Verify the URL passed to yt-dlp uses exactly one '@' prefix
+        call_args = mock_ydl.extract_info.call_args
+        used_url = call_args[0][0]
+        self.assertEqual(used_url, "https://www.tiktok.com/@cooluser/video/777")
+
+    def test_video_info_with_full_url_video_id(self):
+        """When video_id starts with http, it should be used as-is."""
+        import sys
+        import asyncio
+
+        from api_server import get_video_info
+
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "id": "123",
+            "webpage_url": "https://tiktok.com/@user/video/123",
+            "title": "Full URL video",
+            "uploader": "user",
+            "upload_date": "20240303",
+            "timestamp": 1709424000,
+            "like_count": 5,
+            "view_count": 50,
+            "url": "",
+        }
+
+        mock_yt_dlp = MagicMock()
+        mock_yt_dlp.YoutubeDL.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_yt_dlp.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Full URLs can't be passed as path params (slashes break routing),
+        # so test the async function directly.
+        original = sys.modules.get("yt_dlp")
+        sys.modules["yt_dlp"] = mock_yt_dlp
+        try:
+            full_url = "https://tiktok.com/@user/video/123"
+            result = asyncio.get_event_loop().run_until_complete(
+                get_video_info(video_id=full_url)
+            )
+        finally:
+            if original is not None:
+                sys.modules["yt_dlp"] = original
+            else:
+                sys.modules.pop("yt_dlp", None)
+
+        self.assertTrue(result.success)
+
+        # Verify yt-dlp received the full URL as-is
+        call_args = mock_ydl.extract_info.call_args
+        used_url = call_args[0][0]
+        self.assertEqual(used_url, full_url)
+
+
 class TestResponseEnvelope(unittest.TestCase):
     """All endpoints must return the standard { success, data, error } envelope."""
 

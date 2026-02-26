@@ -135,7 +135,7 @@ async def get_video_info(
     """
     Fetch metadata for a single TikTok video.
 
-    TikTok requires URLs in format: ``@username/video/id``
+    TikTok requires URLs in format: ``https://www.tiktok.com/@username/video/id``
     Pass the ``username`` query parameter for reliable lookups.
     """
     try:
@@ -145,9 +145,11 @@ async def get_video_info(
         if video_id.startswith("http"):
             # video_id is already a full URL
             url = video_id
-        elif username:
+        elif username and username.strip():
+            # Strip leading '@' to avoid double-prefix (e.g. @@user)
+            clean_username = username.strip().lstrip("@")
             # Construct proper TikTok URL with username
-            url = f"https://www.tiktok.com/@{username}/video/{video_id}"
+            url = f"https://www.tiktok.com/@{clean_username}/video/{video_id}"
         else:
             # Fallback (will likely fail, but maintains backward compatibility)
             url = f"https://www.tiktok.com/video/{video_id}"
