@@ -130,7 +130,7 @@ async def get_user_videos(
 @app.get("/api/video/{video_id}/info", response_model=ApiResponse)
 async def get_video_info(
     video_id: str,
-    username: str = Query(None, description="TikTok username (required for proper URL construction)"),
+    username: str = Query(None, description="TikTok username (optional but recommended for proper URL construction)"),
 ):
     """
     Fetch metadata for a single TikTok video.
