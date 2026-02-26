@@ -128,16 +128,29 @@ async def get_user_videos(
 
 
 @app.get("/api/video/{video_id}/info", response_model=ApiResponse)
-async def get_video_info(video_id: str):
+async def get_video_info(
+    video_id: str,
+    username: str = Query(None, description="TikTok username (required for proper URL construction)"),
+):
     """
     Fetch metadata for a single TikTok video.
 
-    Uses yt-dlp ``extract_info`` without downloading the file.
+    TikTok requires URLs in format: ``@username/video/id``
+    Pass the ``username`` query parameter for reliable lookups.
     """
     try:
         import yt_dlp
 
-        url = f"https://www.tiktok.com/video/{video_id}"
+        # Smart URL construction
+        if video_id.startswith("http"):
+            # video_id is already a full URL
+            url = video_id
+        elif username:
+            # Construct proper TikTok URL with username
+            url = f"https://www.tiktok.com/@{username}/video/{video_id}"
+        else:
+            # Fallback (will likely fail, but maintains backward compatibility)
+            url = f"https://www.tiktok.com/video/{video_id}"
 
         ydl_opts = {
             "quiet": True,
@@ -163,7 +176,7 @@ async def get_video_info(video_id: str):
             id=info.get("id", video_id),
             url=info.get("webpage_url", url),
             title=info.get("title", ""),
-            author=info.get("uploader", ""),
+            author=info.get("uploader", username or ""),
             upload_date=info.get("upload_date", ""),
             upload_timestamp=info.get("timestamp", 0),
             likes=info.get("like_count", 0) or 0,

@@ -26,10 +26,11 @@ interface TikTokApiService {
         @Query("count") count: Int = 5
     ): Response<ApiResponse>
 
-    /** Get single video info – GET /api/video/{video_id}/info */
+    /** Get single video info – GET /api/video/{video_id}/info?username=X */
     @GET("api/video/{video_id}/info")
     suspend fun getVideoInfo(
-        @Path("video_id") videoId: String
+        @Path("video_id") videoId: String,
+        @Query("username") username: String? = null
     ): Response<ApiResponse>
 }
 

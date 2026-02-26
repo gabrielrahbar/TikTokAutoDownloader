@@ -144,6 +144,86 @@ class TestVideoInfoEndpoint(unittest.TestCase):
         self.assertEqual(video["likes"], 500)
 
 
+    def test_video_info_with_username(self):
+        """When username is provided, URL should include @username."""
+        import sys
+
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "id": "888",
+            "webpage_url": "https://tiktok.com/@cooluser/video/888",
+            "title": "Username video",
+            "uploader": "cooluser",
+            "upload_date": "20240201",
+            "timestamp": 1706745600,
+            "like_count": 100,
+            "view_count": 5000,
+            "url": "https://cdn.tiktok.com/video888.mp4",
+        }
+
+        mock_yt_dlp = MagicMock()
+        mock_yt_dlp.YoutubeDL.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_yt_dlp.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        original = sys.modules.get("yt_dlp")
+        sys.modules["yt_dlp"] = mock_yt_dlp
+        try:
+            response = self.client.get("/api/video/888/info?username=cooluser")
+        finally:
+            if original is not None:
+                sys.modules["yt_dlp"] = original
+            else:
+                sys.modules.pop("yt_dlp", None)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+
+        # Verify the URL passed to yt-dlp includes the username
+        call_args = mock_ydl.extract_info.call_args
+        used_url = call_args[0][0]
+        self.assertIn("@cooluser", used_url)
+        self.assertEqual(used_url, "https://www.tiktok.com/@cooluser/video/888")
+
+    def test_video_info_without_username_fallback(self):
+        """Without username, fallback URL is used (backward compat)."""
+        import sys
+
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "id": "777",
+            "webpage_url": "https://tiktok.com/video/777",
+            "title": "Fallback video",
+            "uploader": "",
+            "upload_date": "20240301",
+            "timestamp": 1709251200,
+            "like_count": 0,
+            "view_count": 0,
+            "url": "",
+        }
+
+        mock_yt_dlp = MagicMock()
+        mock_yt_dlp.YoutubeDL.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_yt_dlp.YoutubeDL.return_value.__exit__ = MagicMock(return_value=False)
+
+        original = sys.modules.get("yt_dlp")
+        sys.modules["yt_dlp"] = mock_yt_dlp
+        try:
+            response = self.client.get("/api/video/777/info")
+        finally:
+            if original is not None:
+                sys.modules["yt_dlp"] = original
+            else:
+                sys.modules.pop("yt_dlp", None)
+
+        self.assertEqual(response.status_code, 200)
+
+        # Verify the URL passed to yt-dlp uses the old fallback format
+        call_args = mock_ydl.extract_info.call_args
+        used_url = call_args[0][0]
+        self.assertEqual(used_url, "https://www.tiktok.com/video/777")
+
+
 class TestResponseEnvelope(unittest.TestCase):
     """All endpoints must return the standard { success, data, error } envelope."""
 

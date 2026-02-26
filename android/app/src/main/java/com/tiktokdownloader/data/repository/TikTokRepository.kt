@@ -120,9 +120,9 @@ class TikTokRepository(
      *
      * Response envelope: { success, data: { video: { ... } }, error }
      */
-    suspend fun fetchVideoInfo(videoId: String): Result<VideoData> {
+    suspend fun fetchVideoInfo(videoId: String, username: String? = null): Result<VideoData> {
         return RetryHelper.withRetry(config = RetryHelper.DEFAULT_API) {
-            val response = apiService.getVideoInfo(videoId)
+            val response = apiService.getVideoInfo(videoId, username)
             if (!response.isSuccessful) {
                 throw Exception("HTTP ${response.code()}: ${response.message()}")
             }
