@@ -1,0 +1,16 @@
+# Render.com deployment configuration
+# Auto-deploy: connect this repo to Render and it will use this file.
+# Free tier: 512 MB RAM, spins down after 15 min inactivity.
+
+services:
+  - type: web
+    name: tiktok-downloader-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api_server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+    healthCheckPath: /health
+    autoDeploy: true
