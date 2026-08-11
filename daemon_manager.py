@@ -66,46 +66,71 @@ class DaemonManager:
                 pid = process.pid
                 
             else:  # Unix (Linux, macOS)
-                # Fork process to create daemon
+                # Classic double-fork daemonization. The intermediate child
+                # (first fork) exits right after spawning the grandchild, so
+                # its PID is useless for tracking - it's dead/zombie within
+                # milliseconds. We use a pipe so the grandchild (the process
+                # that actually keeps running) can report its own PID back
+                # to us; previously we recorded the intermediate child's PID
+                # instead, which meant is_running()/get_status() looked up a
+                # process that no longer existed, reported the daemon as not
+                # running, and deleted the PID file out from under a daemon
+                # that was in fact still running (just untracked and no
+                # longer stoppable via --stop).
+                read_fd, write_fd = os.pipe()
+
                 pid = os.fork()
-                
+
                 if pid > 0:
-                    # Parent process
-                    time.sleep(0.5)  # Give child time to start
-                    self.write_pid(pid)
+                    # Parent process: wait for the grandchild to report its
+                    # real PID, then reap the intermediate child.
+                    os.close(write_fd)
+                    with os.fdopen(read_fd) as pipe_in:
+                        daemon_pid_str = pipe_in.read().strip()
+                    os.waitpid(pid, 0)
+
+                    if not daemon_pid_str:
+                        print("❌ Failed to start daemon")
+                        return None
+
+                    daemon_pid = int(daemon_pid_str)
+                    self.write_pid(daemon_pid)
                     print(f"✅ Daemon started successfully!")
-                    print(f"   PID: {pid}")
+                    print(f"   PID: {daemon_pid}")
                     print(f"   Check logs: tail -f logs/tiktok_monitor_*.log")
                     print(f"   Status: python tiktok_monitor.py --status")
                     print(f"   Stop: python tiktok_monitor.py --stop")
-                    return pid
+                    return daemon_pid
                 else:
-                    # Child process - become daemon
-                    # Detach from parent
+                    # Intermediate child - detach from parent
+                    os.close(read_fd)
                     os.setsid()
-                    
-                    # Second fork to prevent zombie
+
+                    # Second fork to prevent zombie accumulation on the
+                    # grandchild once it eventually exits
                     pid = os.fork()
                     if pid > 0:
-                        sys.exit(0)
-                    
+                        os.close(write_fd)
+                        os._exit(0)
+
                     # Redirect standard file descriptors
                     sys.stdout.flush()
                     sys.stderr.flush()
-                    
+
                     # Close stdin/stdout/stderr
                     with open(os.devnull, 'r') as f:
                         os.dup2(f.fileno(), sys.stdin.fileno())
                     with open(os.devnull, 'a+') as f:
                         os.dup2(f.fileno(), sys.stdout.fileno())
                         os.dup2(f.fileno(), sys.stderr.fileno())
-                    
-                    # Write PID
-                    self.write_pid(os.getpid())
-                    
+
+                    # Report our real PID back to the original process
+                    with os.fdopen(write_fd, 'w') as pipe_out:
+                        pipe_out.write(str(os.getpid()))
+
                     # Execute the actual monitoring
-                    # This happens in the child process
-                    return None  # Child doesn't return
+                    # This happens in the grandchild process
+                    return None  # Grandchild doesn't return
             
             # Windows continues here
             self.write_pid(pid)
