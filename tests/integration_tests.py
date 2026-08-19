@@ -66,6 +66,7 @@ class TestTikTokIntegration(unittest.TestCase):
             result = subprocess.run(
                 [
                     'yt-dlp',
+                    '--impersonate', 'Chrome',
                     '--dump-json',
                     '--no-download',
                     '--quiet',
@@ -107,6 +108,7 @@ class TestTikTokIntegration(unittest.TestCase):
             result = subprocess.run(
                 [
                     'yt-dlp',
+                    '--impersonate', 'Chrome',
                     '-o', output_path,
                     '--quiet',
                     '--no-warnings',
@@ -146,6 +148,7 @@ class TestTikTokIntegration(unittest.TestCase):
             result = subprocess.run(
                 [
                     'yt-dlp',
+                    '--impersonate', 'Chrome',
                     '--dump-json',
                     '--no-download',
                     '--quiet',
@@ -189,6 +192,7 @@ class TestTikTokIntegration(unittest.TestCase):
                 result = subprocess.run(
                     [
                         'yt-dlp',
+                        '--impersonate', 'Chrome',
                         '--dump-json',
                         '--no-download',
                         '--quiet',
