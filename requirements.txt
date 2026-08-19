@@ -5,6 +5,7 @@
 yt-dlp>=2023.10.0
 packaging>=21.0
 psutil>=5.9.0
+yt-dlp[curl-cffi]
 
 # Optional but recommended for advanced features
 requests>=2.31.0
